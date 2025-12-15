@@ -1,0 +1,35 @@
+[Unit]
+Description=HyperBot Trading System
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=10
+User=%USER%
+WorkingDirectory=/path/to/hyperbot
+ExecStart=/usr/bin/python3 /path/to/hyperbot/app/bot.py
+
+# Environment
+Environment="PYTHONUNBUFFERED=1"
+EnvironmentFile=/path/to/hyperbot/.env
+
+# Logging
+StandardOutput=append:/path/to/hyperbot/logs/systemd-out.log
+StandardError=append:/path/to/hyperbot/logs/systemd-error.log
+
+# Resource limits
+MemoryMax=512M
+CPUQuota=80%
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Auto-restart limits
+StartLimitBurst=5
+StartLimitIntervalSec=600
+
+[Install]
+WantedBy=multi-user.target
