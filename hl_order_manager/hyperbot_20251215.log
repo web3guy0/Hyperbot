@@ -1,0 +1,37 @@
+2025-12-15 11:06:57,095 - HyperBot - INFO - 📝 Trading Logger initialized for HyperBot
+2025-12-15 11:06:57,095 - HyperBot - INFO -    Log directory: hl_order_manager
+2025-12-15 11:06:57,108 - HyperBot - INFO - 📝 Trading Logger initialized for HyperBot
+2025-12-15 11:06:57,109 - HyperBot - INFO -    Log directory: hl_websocket
+2025-12-15 11:07:01,926 - HyperBot - INFO - HyperLiquidClient initialized for 0xeF0CA0E4...
+2025-12-15 11:07:02,940 - HyperBot - INFO - Subscribed to allMids
+2025-12-15 11:07:02,945 - HyperBot - INFO - Subscribed to userFills
+2025-12-15 11:07:02,945 - HyperBot - INFO - Subscribed to orderUpdates
+2025-12-15 11:07:02,946 - HyperBot - INFO - Subscribed to candle:SOL:1m
+2025-12-15 11:07:02,946 - HyperBot - INFO - Subscribed to candle:ETH:1m
+2025-12-15 11:07:02,947 - HyperBot - INFO - Subscribed to candle:BTC:1m
+2025-12-15 11:07:02,947 - HyperBot - INFO - WebSocket started
+2025-12-15 11:07:03,527 - HyperBot - INFO - set_leverage SOL 5x cross: {'status': 'ok', 'response': {'type': 'default'}}
+2025-12-15 11:07:04,127 - HyperBot - INFO - set_leverage ETH 5x cross: {'status': 'ok', 'response': {'type': 'default'}}
+2025-12-15 11:07:04,713 - HyperBot - INFO - set_leverage BTC 5x cross: {'status': 'ok', 'response': {'type': 'default'}}
+2025-12-15 11:09:43,394 - HyperBot - INFO - 🎯 set_position_tpsl called: BTC TP=$92793.73 SL=$88739.635
+2025-12-15 11:09:43,545 - HyperBot - INFO -    Found 1 asset positions
+2025-12-15 11:09:43,545 - HyperBot - INFO -    Found matching position: BTC size=0.01755 is_long=True
+2025-12-15 11:09:43,546 - HyperBot - INFO - 🎯 Setting TP/SL for BTC LONG 0.01755
+2025-12-15 11:09:43,546 - HyperBot - INFO -    Entry: $90091.0 | TP: $92793.73 | SL: $88739.635
+2025-12-15 11:09:43,701 - HyperBot - INFO -    Cancelled all existing orders for BTC
+2025-12-15 11:09:44,244 - HyperBot - INFO -    Cancelled all existing orders for BTC
+2025-12-15 11:09:45,286 - HyperBot - INFO - ✅ TP order placed for BTC @ trigger $92794.0 (limit $92330.0): {'status': 'ok', 'response': {'type': 'order', 'data': {'statuses': [{'resting': {'oid': 45028808492}}]}}}
+2025-12-15 11:09:46,271 - HyperBot - INFO - ✅ SL order placed for BTC @ trigger $88740.0 (limit $87852.0): {'status': 'ok', 'response': {'type': 'order', 'data': {'statuses': [{'resting': {'oid': 45028808889}}]}}}
+2025-12-15 11:09:46,271 - HyperBot - INFO -    set_tp_sl results: [{'type': 'tp', 'result': {'status': 'ok', 'response': {'type': 'order', 'data': {'statuses': [{'resting': {'oid': 45028808492}}]}}}}, {'type': 'sl', 'result': {'status': 'ok', 'response': {'type': 'order', 'data': {'statuses': [{'resting': {'oid': 45028808889}}]}}}}]
+2025-12-15 11:10:48,210 - HyperBot - INFO - 🎯 set_position_tpsl called: ETH TP=$3248.5994 SL=$3106.6703
+2025-12-15 11:10:48,354 - HyperBot - INFO -    Found 2 asset positions
+2025-12-15 11:10:48,355 - HyperBot - INFO -    Found matching position: ETH size=0.3548 is_long=True
+2025-12-15 11:10:48,355 - HyperBot - INFO - 🎯 Setting TP/SL for ETH LONG 0.3548
+2025-12-15 11:10:48,355 - HyperBot - INFO -    Entry: $3153.98 | TP: $3248.5994 | SL: $3106.6703
+2025-12-15 11:10:48,502 - HyperBot - INFO -    Cancelled all existing orders for ETH
+2025-12-15 11:10:48,648 - HyperBot - INFO -    Cancelled all existing orders for ETH
+2025-12-15 11:10:49,550 - HyperBot - INFO - ✅ TP order placed for ETH @ trigger $3248.6 (limit $3232.4): {'status': 'ok', 'response': {'type': 'order', 'data': {'statuses': [{'resting': {'oid': 45028835234}}]}}}
+2025-12-15 11:10:50,611 - HyperBot - INFO - ✅ SL order placed for ETH @ trigger $3106.7 (limit $3075.6): {'status': 'ok', 'response': {'type': 'order', 'data': {'statuses': [{'resting': {'oid': 45028835622}}]}}}
+2025-12-15 11:10:50,612 - HyperBot - INFO -    set_tp_sl results: [{'type': 'tp', 'result': {'status': 'ok', 'response': {'type': 'order', 'data': {'statuses': [{'resting': {'oid': 45028835234}}]}}}}, {'type': 'sl', 'result': {'status': 'ok', 'response': {'type': 'order', 'data': {'statuses': [{'resting': {'oid': 45028835622}}]}}}}]
+2025-12-15 11:13:44,051 - HyperBot - INFO - market_close BTC 0.01755 @ $89085.0: {'status': 'ok', 'response': {'type': 'order', 'data': {'statuses': [{'filled': {'totalSz': '0.01755', 'avgPx': '89977.0', 'oid': 45028919966}}]}}}
+2025-12-15 11:14:03,964 - HyperBot - INFO - WebSocket stopped

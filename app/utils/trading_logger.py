@@ -4,6 +4,7 @@ Comprehensive logging system for trading operations
 """
 
 import logging
+import logging.handlers
 import json
 from typing import Dict, Any, Optional
 from decimal import Decimal
@@ -108,10 +109,13 @@ class TradingLogger:
         self.logger.exception(msg, *args, **kwargs)
     
     def _setup_file_handlers(self):
-        """Setup file handlers for different log levels"""
-        # Main log file
-        main_handler = logging.FileHandler(
-            self.log_dir / f"{self.component_name.lower()}_{datetime.now(timezone.utc).strftime('%Y%m%d')}.log"
+        """Setup file handlers with rotation for different log levels"""
+        # Main log file with rotation (10MB max, keep 5 backups)
+        main_handler = logging.handlers.RotatingFileHandler(
+            self.log_dir / f"{self.component_name.lower()}.log",
+            maxBytes=10*1024*1024,  # 10MB
+            backupCount=5,
+            encoding='utf-8'
         )
         main_handler.setLevel(logging.INFO)
         main_handler.setFormatter(logging.Formatter(
@@ -119,9 +123,12 @@ class TradingLogger:
         ))
         self.logger.addHandler(main_handler)
         
-        # Error log file
-        error_handler = logging.FileHandler(
-            self.log_dir / f"errors_{datetime.now(timezone.utc).strftime('%Y%m%d')}.log"
+        # Error log file with rotation
+        error_handler = logging.handlers.RotatingFileHandler(
+            self.log_dir / "errors.log",
+            maxBytes=5*1024*1024,  # 5MB
+            backupCount=3,
+            encoding='utf-8'
         )
         error_handler.setLevel(logging.ERROR)
         error_handler.setFormatter(logging.Formatter(

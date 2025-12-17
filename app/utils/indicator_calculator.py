@@ -27,6 +27,8 @@ class IndicatorCalculator:
         # Cache for indicators
         self._indicator_cache: Dict[str, Any] = {}
         self._last_prices_hash: Optional[int] = None
+        self._last_prices_len: int = 0  # Track length to detect new candles
+        self._last_price: Optional[Decimal] = None  # Track last price
         
         # State for stateful indicators (RSI, MACD, ADX)
         self.rsi_avg_gain: Optional[Decimal] = None
@@ -51,9 +53,21 @@ class IndicatorCalculator:
         if len(prices) < 100:
             return {}
         
-        # Check if prices changed (cache validation)
+        # FIXED: Improved cache validation to prevent hash collision
+        # Use combination of: length, last price, and hash of recent prices
+        current_len = len(prices)
+        current_last_price = prices[-1]
         prices_hash = hash(tuple(prices[-50:]))
-        if prices_hash == self._last_prices_hash and self._indicator_cache:
+        
+        # Cache is valid only if ALL conditions match
+        cache_valid = (
+            self._indicator_cache and
+            self._last_prices_hash == prices_hash and
+            self._last_prices_len == current_len and
+            self._last_price == current_last_price
+        )
+        
+        if cache_valid:
             logger.debug("⚡ Using cached indicators (no price change)")
             return self._indicator_cache
         
@@ -105,9 +119,11 @@ class IndicatorCalculator:
             avg_volume = sum(volumes[-20:]) / 20
             indicators['volume_ratio'] = volumes[-1] / avg_volume if avg_volume > 0 else Decimal('1')
         
-        # Update cache
+        # Update cache with all validation data
         self._indicator_cache = indicators
         self._last_prices_hash = prices_hash
+        self._last_prices_len = current_len
+        self._last_price = current_last_price
         
         rsi_val = float(rsi) if rsi else 0
         ema_fast_val = float(ema_fast) if ema_fast else 0
@@ -157,8 +173,8 @@ class IndicatorCalculator:
         return ema
     
     def _calculate_macd(self, prices: List[Decimal]) -> Optional[Dict[str, Decimal]]:
-        """Calculate MACD indicator"""
-        if len(prices) < 26:
+        """Calculate MACD indicator - FIXED: Calculate signal from contiguous MACD values"""
+        if len(prices) < 35:  # Need 26 for EMA_slow + 9 for signal line
             return None
         
         ema_fast = self._calculate_ema(list(prices), 12)
@@ -168,10 +184,22 @@ class IndicatorCalculator:
             return None
         
         macd_line = ema_fast - ema_slow
-        self.macd_values.append(macd_line)
         
-        if len(self.macd_values) >= 9:
-            signal_line = self._calculate_ema(list(self.macd_values), 9)
+        # CRITICAL FIX: Calculate signal line from MACD values over the price history
+        # This ensures contiguous data instead of accumulated values across calls
+        # Calculate MACD for last 9 candles to get proper signal line
+        macd_history = []
+        for i in range(9):
+            if len(prices) >= 26 + i:
+                subset = prices[:len(prices) - i] if i > 0 else prices
+                if len(subset) >= 26:
+                    ema_f = self._calculate_ema(list(subset), 12)
+                    ema_s = self._calculate_ema(list(subset), 26)
+                    if ema_f and ema_s:
+                        macd_history.insert(0, ema_f - ema_s)
+        
+        if len(macd_history) >= 9:
+            signal_line = self._calculate_ema(macd_history, 9)
         else:
             signal_line = macd_line
         
@@ -204,7 +232,12 @@ class IndicatorCalculator:
         }
     
     def _calculate_adx(self, prices: List[Decimal], period: int = 14) -> Optional[Decimal]:
-        """Calculate ADX (trend strength)"""
+        """Calculate ADX (trend strength) - NOTE: Uses close-only approximation.
+        
+        WARNING: This is a simplified version using only close prices.
+        For accurate ADX, use _calculate_adx_from_candles() with H/L/C data.
+        True Range should be: max(H-L, |H-prev_close|, |L-prev_close|)
+        """
         if len(prices) < period * 2:
             return None
         
@@ -216,6 +249,8 @@ class IndicatorCalculator:
             current = prices[i]
             previous = prices[i-1]
             
+            # NOTE: This is an approximation - true TR needs H/L/C
+            # Using close-to-close as fallback when candles not available
             tr = abs(current - previous)
             tr_list.append(tr)
             
@@ -337,7 +372,20 @@ class IndicatorCalculator:
         atr = sum(tr_list[-period:]) / period
         return atr
     def invalidate_cache(self):
-        """Invalidate cache on new candle"""
+        """Invalidate cache on new candle - FIXED: Also reset stateful indicator values"""
         self._indicator_cache = {}
         self._last_prices_hash = None
-        logger.debug("🔄 Indicator cache invalidated")
+        
+        # CRITICAL FIX: Reset RSI state variables to prevent drift
+        # RSI uses Wilder's smoothing with persistent state
+        # Not resetting causes values to drift from true values over time
+        self.rsi_avg_gain = None
+        self.rsi_avg_loss = None
+        
+        # CRITICAL FIX: Reset ADX state
+        self.adx_value = None
+        
+        # CRITICAL FIX: Clear MACD history to prevent non-contiguous data
+        self.macd_values.clear()
+        
+        logger.debug("🔄 Indicator cache invalidated (including RSI/ADX/MACD state)")

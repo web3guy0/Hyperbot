@@ -6,7 +6,7 @@ Multiple safety triggers to halt trading immediately
 import logging
 from typing import Dict, Any, Optional, Callable, List
 from decimal import Decimal
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -210,25 +210,39 @@ class KillSwitch:
         """
         Record trade result for error tracking
         
+        CRITICAL FIX: Track errors with timestamps, not just counts.
+        This ensures error rate is calculated over the same time window as trades.
+        
         Args:
             success: Whether trade was successful
         """
+        now = datetime.now(timezone.utc)
+        
         self.recent_trades.append({
-            'time': datetime.now(timezone.utc),
+            'time': now,
             'success': success
         })
         
         if not success:
             self.recent_errors.append({
-                'time': datetime.now(timezone.utc)
+                'time': now
             })
         
-        # Trim to max size
+        # CRITICAL FIX: Trim BOTH lists together based on time, not count
+        # This prevents error rate calculation from being skewed by independent trimming
+        cutoff_time = now - timedelta(minutes=30)  # Keep last 30 minutes of data
+        
+        self.recent_trades = [t for t in self.recent_trades if t['time'] > cutoff_time]
+        self.recent_errors = [e for e in self.recent_errors if e['time'] > cutoff_time]
+        
+        # Also apply max count limit as a safety
         if len(self.recent_trades) > self.max_recent_items:
             self.recent_trades = self.recent_trades[-self.max_recent_items:]
         
-        if len(self.recent_errors) > self.max_recent_items:
-            self.recent_errors = self.recent_errors[-self.max_recent_items:]
+        # CRITICAL FIX: Only keep errors that have a corresponding trade in recent_trades
+        # This ensures error rate is accurate after trimming
+        earliest_trade_time = self.recent_trades[0]['time'] if self.recent_trades else now
+        self.recent_errors = [e for e in self.recent_errors if e['time'] >= earliest_trade_time]
     
     def record_connection_loss(self):
         """Record connection loss"""

@@ -133,21 +133,65 @@ class KellyCriterion:
         logger.debug(f"Kelly: Added trade P&L ${pnl:+.2f}, total trades: {len(self.trade_history)}")
     
     def load_trade_history(self, trades: List[Dict[str, Any]]):
-        """Load historical trades from database or file"""
-        for trade in trades:
-            pnl = trade.get('pnl', trade.get('realized_pnl', 0))
-            if pnl == 0:
-                continue
-                
-            self.trade_history.append({
-                'timestamp': trade.get('timestamp', datetime.now(timezone.utc)),
-                'pnl': float(pnl),
-                'pnl_pct': trade.get('pnl_pct', 0),
-                'is_winner': float(pnl) > 0,
-                'strategy': trade.get('strategy')
-            })
+        """Load historical trades from database or file with validation"""
+        loaded_count = 0
+        skipped_count = 0
         
-        logger.info(f"📊 Loaded {len(self.trade_history)} trades for Kelly calculation")
+        for trade in trades:
+            # CRITICAL FIX: Validate trade data before processing
+            try:
+                pnl = trade.get('pnl', trade.get('realized_pnl', 0))
+                
+                # Skip invalid PnL values
+                if pnl is None:
+                    skipped_count += 1
+                    continue
+                    
+                # Convert to float with validation
+                try:
+                    pnl_float = float(pnl)
+                except (ValueError, TypeError):
+                    logger.warning(f"Kelly: Invalid PnL value: {pnl}")
+                    skipped_count += 1
+                    continue
+                
+                # Skip zero PnL trades (breakeven - no information)
+                if pnl_float == 0:
+                    skipped_count += 1
+                    continue
+                
+                # Validate timestamp
+                timestamp = trade.get('timestamp')
+                if timestamp is None:
+                    timestamp = datetime.now(timezone.utc)
+                elif isinstance(timestamp, str):
+                    try:
+                        timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                    except ValueError:
+                        timestamp = datetime.now(timezone.utc)
+                
+                # Validate pnl_pct if present
+                pnl_pct = trade.get('pnl_pct', 0)
+                try:
+                    pnl_pct = float(pnl_pct)
+                except (ValueError, TypeError):
+                    pnl_pct = 0
+                
+                self.trade_history.append({
+                    'timestamp': timestamp,
+                    'pnl': pnl_float,
+                    'pnl_pct': pnl_pct,
+                    'is_winner': pnl_float > 0,
+                    'strategy': trade.get('strategy')
+                })
+                loaded_count += 1
+                
+            except Exception as e:
+                logger.warning(f"Kelly: Error processing trade: {e}")
+                skipped_count += 1
+                continue
+        
+        logger.info(f"📊 Loaded {loaded_count} trades for Kelly calculation (skipped {skipped_count} invalid)")
         self._cached_result = None
     
     def calculate(self, strategy: str = None) -> KellyResult:

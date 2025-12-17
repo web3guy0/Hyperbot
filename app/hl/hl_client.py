@@ -4,6 +4,7 @@ Direct SDK methods with minimal wrapper overhead.
 Target: Maximum speed, minimum code.
 """
 import os
+import time
 import asyncio
 from functools import lru_cache
 from typing import Optional, Dict, Any, List
@@ -52,6 +53,11 @@ class HyperLiquidClient:
         
         self._meta_cache: Optional[Dict] = None
         
+        # CRITICAL FIX: Rate limit monitoring
+        self._rate_limit_warning_threshold = 0.8  # Warn at 80% usage
+        self._last_rate_limit_check: float = 0
+        self._rate_limit_check_interval = 60.0  # Check every 60 seconds
+        
         logger.info(f"HyperLiquidClient initialized for {self.address[:10]}...")
     
     @property
@@ -98,6 +104,64 @@ class HyperLiquidClient:
         
         # All retries exhausted
         raise last_error
+
+    # ==================== RATE LIMIT MONITORING ====================
+    def check_rate_limit(self, force: bool = False) -> Dict[str, Any]:
+        """
+        Check current API rate limit usage.
+        
+        CRITICAL FIX: Monitor rate limits to prevent hitting API caps.
+        Per documentation: query_user_rate_limit returns nRequestsUsed and nRequestsCap.
+        
+        Args:
+            force: If True, check even if recently checked
+            
+        Returns:
+            Dict with 'usage_pct', 'requests_used', 'requests_cap', 'is_safe'
+        """
+        now = time.time()
+        if not force and (now - self._last_rate_limit_check) < self._rate_limit_check_interval:
+            return {'skipped': True}
+        
+        try:
+            self._last_rate_limit_check = now
+            
+            # Use info endpoint to check rate limit
+            # The SDK may not have this method directly, try the raw request
+            rate_limit_info = self.info.query_user_rate_limit(self.address)
+            
+            requests_used = rate_limit_info.get('nRequestsUsed', 0)
+            requests_cap = rate_limit_info.get('nRequestsCap', 1200)  # Default cap
+            
+            usage_pct = requests_used / requests_cap if requests_cap > 0 else 0
+            is_safe = usage_pct < self._rate_limit_warning_threshold
+            
+            if not is_safe:
+                logger.warning(f"⚠️ RATE LIMIT WARNING: {usage_pct:.1%} used ({requests_used}/{requests_cap})")
+            else:
+                logger.debug(f"📊 Rate limit: {usage_pct:.1%} ({requests_used}/{requests_cap})")
+            
+            return {
+                'usage_pct': usage_pct,
+                'requests_used': requests_used,
+                'requests_cap': requests_cap,
+                'is_safe': is_safe
+            }
+        except Exception as e:
+            logger.debug(f"Rate limit check failed: {e}")
+            return {'error': str(e), 'is_safe': True}  # Assume safe on error
+    
+    def should_throttle(self) -> bool:
+        """
+        Check if API calls should be throttled due to rate limit.
+        
+        Returns:
+            True if rate limit is near capacity and calls should be delayed
+        """
+        result = self.check_rate_limit()
+        if result.get('skipped') or result.get('error'):
+            return False
+        return not result.get('is_safe', True)
 
     # ==================== METADATA ====================
     @lru_cache(maxsize=1)

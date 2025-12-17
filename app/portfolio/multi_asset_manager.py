@@ -35,10 +35,14 @@ class AssetState:
     entry_price: Decimal = Decimal('0')
     unrealized_pnl: Decimal = Decimal('0')
     
-    # Candle cache
+    # Candle cache (LTF - 1m, 5m)
     candles: List[Dict[str, Any]] = field(default_factory=list)
     last_candle_fetch: Optional[datetime] = None
     candle_update_pending: bool = False
+    
+    # HTF candle cache (15m, 1h, 4h) for multi-timeframe analysis
+    htf_candles: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)  # {interval: candles}
+    last_htf_fetch: Optional[datetime] = None
     
     # Signal cooldown (prevent over-trading)
     last_signal_time: Optional[datetime] = None
@@ -299,6 +303,35 @@ class MultiAssetManager:
         """Mark that candles need update (WebSocket new candle)"""
         if symbol in self.assets:
             self.assets[symbol].candle_update_pending = True
+    
+    # ==================== HTF CANDLE MANAGEMENT ====================
+    def update_htf_candles(self, symbol: str, htf_candles: Dict[str, List[Dict[str, Any]]]):
+        """Update HTF candles for an asset"""
+        if symbol not in self.assets:
+            return
+        
+        state = self.assets[symbol]
+        state.htf_candles = htf_candles
+        state.last_htf_fetch = datetime.now(timezone.utc)
+    
+    def get_htf_candles(self, symbol: str) -> Dict[str, List[Dict[str, Any]]]:
+        """Get cached HTF candles for an asset"""
+        if symbol not in self.assets:
+            return {}
+        return self.assets[symbol].htf_candles
+    
+    def needs_htf_refresh(self, symbol: str, max_age_seconds: int = 900) -> bool:
+        """Check if HTF candles need refresh for an asset (default 15 min)"""
+        if symbol not in self.assets:
+            return True
+        
+        state = self.assets[symbol]
+        
+        if not state.htf_candles or not state.last_htf_fetch:
+            return True
+        
+        age = (datetime.now(timezone.utc) - state.last_htf_fetch).total_seconds()
+        return age > max_age_seconds
     
     def enable_asset(self, symbol: str) -> bool:
         """Enable trading for an asset"""

@@ -309,51 +309,71 @@ class PositionManager:
         Ensure position has TP/SL protection.
         This checks ACTUAL orders, not just managed_by_bot flag.
         Handles: restart after cancelling orders, orphaned positions, etc.
+        
+        THREAD SAFETY: Uses _positions_lock to prevent race conditions
         """
         try:
-            # Throttle: Only check protection every 60 seconds per position
-            now = datetime.now(timezone.utc)
-            last_check = getattr(position, '_last_protection_check', None)
-            if last_check and (now - last_check).total_seconds() < 60:
-                return  # Already checked recently
-            position._last_protection_check = now
+            # Thread-safe check and update
+            async with self._positions_lock:
+                # Throttle: Only check protection every 60 seconds per position
+                now = datetime.now(timezone.utc)
+                last_check = getattr(position, '_last_protection_check', None)
+                if last_check and (now - last_check).total_seconds() < 60:
+                    return  # Already checked recently
+                position._last_protection_check = now
+                
+                # Check if we're already processing this position
+                if getattr(position, '_protection_in_progress', False):
+                    logger.debug(f"🔒 {position.symbol}: Protection already in progress, skipping")
+                    return
+                position._protection_in_progress = True
             
-            # Get actual open orders for this symbol
-            if hasattr(self.client, 'get_frontend_open_orders'):
-                open_orders = self.client.get_frontend_open_orders(position.symbol)
-            else:
-                open_orders = self.client.get_open_orders(position.symbol)
-            
-            # Log for debugging
-            logger.debug(f"🔍 {position.symbol}: Found {len(open_orders)} orders")
-            
-            # Check for existing TP/SL orders
-            has_tp, has_sl = self._detect_tpsl_orders(open_orders, position.side)
-            
-            logger.debug(f"🔍 {position.symbol}: has_tp={has_tp}, has_sl={has_sl}")
-            
-            if has_tp and has_sl:
-                # Position is protected, mark as managed
-                if not position.managed_by_bot:
-                    position.managed_by_bot = True
-                    logger.info(f"✅ {position.symbol} already has TP/SL protection")
-                return
-            
-            # Only set protection if BOTH are missing (prevent partial spam)
-            if has_tp or has_sl:
-                # Has one but not both - log but don't spam
-                logger.info(f"ℹ️ {position.symbol} has partial protection: TP={has_tp}, SL={has_sl}")
-                if has_sl:
-                    # Has SL, that's the important one - mark as protected
-                    position.managed_by_bot = True
-                return
-            
-            # Missing ALL protection! Set TP/SL
-            logger.warning(f"⚠️ {position.symbol} missing protection! Setting TP/SL...")
-            await self._set_position_protection(position, has_tp=has_tp, has_sl=has_sl)
+            try:
+                # Get actual open orders for this symbol
+                if hasattr(self.client, 'get_frontend_open_orders'):
+                    open_orders = self.client.get_frontend_open_orders(position.symbol)
+                else:
+                    open_orders = self.client.get_open_orders(position.symbol)
+                
+                # Log for debugging
+                logger.debug(f"🔍 {position.symbol}: Found {len(open_orders)} orders")
+                
+                # Check for existing TP/SL orders
+                has_tp, has_sl = self._detect_tpsl_orders(open_orders, position.side)
+                
+                logger.debug(f"🔍 {position.symbol}: has_tp={has_tp}, has_sl={has_sl}")
+                
+                if has_tp and has_sl:
+                    # Position is protected, mark as managed
+                    async with self._positions_lock:
+                        if not position.managed_by_bot:
+                            position.managed_by_bot = True
+                            logger.info(f"✅ {position.symbol} already has TP/SL protection")
+                    return
+                
+                # Only set protection if BOTH are missing (prevent partial spam)
+                if has_tp or has_sl:
+                    # Has one but not both - log but don't spam
+                    logger.info(f"ℹ️ {position.symbol} has partial protection: TP={has_tp}, SL={has_sl}")
+                    if has_sl:
+                        # Has SL, that's the important one - mark as protected
+                        async with self._positions_lock:
+                            position.managed_by_bot = True
+                    return
+                
+                # Missing ALL protection! Set TP/SL
+                logger.warning(f"⚠️ {position.symbol} missing protection! Setting TP/SL...")
+                await self._set_position_protection(position, has_tp=has_tp, has_sl=has_sl)
+                
+            finally:
+                # Always release the in-progress flag
+                async with self._positions_lock:
+                    position._protection_in_progress = False
             
         except Exception as e:
             logger.error(f"Error ensuring protection for {position.symbol}: {e}")
+            async with self._positions_lock:
+                position._protection_in_progress = False
     
     def _detect_tpsl_orders(self, orders: List[Dict], position_side: str) -> Tuple[bool, bool]:
         """Detect if TP and SL orders exist for a position"""
@@ -409,11 +429,12 @@ class PositionManager:
         return has_tp, has_sl
 
     async def _set_position_protection(self, position: ManagedPosition, has_tp: bool = False, has_sl: bool = False):
-        """Set TP/SL on unprotected position"""
+        """Set TP/SL on unprotected position - with verification"""
         try:
             # If we already have both, nothing to do
             if has_tp and has_sl:
-                position.managed_by_bot = True
+                async with self._positions_lock:
+                    position.managed_by_bot = True
                 logger.info(f"✅ {position.symbol} already has TP/SL protection")
                 return
             
@@ -440,10 +461,26 @@ class PositionManager:
             )
             
             if result.get('status') == 'ok':
-                position.tp_price = tp_price
-                position.sl_price = sl_price
-                position.managed_by_bot = True
-                logger.info(f"✅ Protection set for {position.symbol}")
+                # Verify orders were actually placed by checking exchange again
+                await asyncio.sleep(0.5)  # Small delay for order propagation
+                
+                if hasattr(self.client, 'get_frontend_open_orders'):
+                    verify_orders = self.client.get_frontend_open_orders(position.symbol)
+                else:
+                    verify_orders = self.client.get_open_orders(position.symbol)
+                
+                verify_tp, verify_sl = self._detect_tpsl_orders(verify_orders, position.side)
+                
+                if (not has_tp and not verify_tp) or (not has_sl and not verify_sl):
+                    logger.warning(f"⚠️ TP/SL verification failed! Expected TP={not has_tp}, SL={not has_sl}, Got TP={verify_tp}, SL={verify_sl}")
+                    # Don't mark as managed - will retry next scan
+                    return
+                
+                async with self._positions_lock:
+                    position.tp_price = tp_price
+                    position.sl_price = sl_price
+                    position.managed_by_bot = True
+                logger.info(f"✅ Protection set and verified for {position.symbol}")
             else:
                 logger.warning(f"⚠️ Failed to set protection: {result}")
                 

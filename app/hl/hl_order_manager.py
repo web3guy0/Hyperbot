@@ -236,14 +236,24 @@ class HLOrderManager:
         orders.append(entry_order)
         
         # Order 1: Take Profit (reduce-only, opposite side)
+        # CRITICAL FIX: Use aggressive slippage limit price for market fills
+        # When isMarket=True, limit_px acts as a worst-case fill price
         if tp_px:
+            # For TP: we're selling (long) or buying (short) at profit
+            # Use aggressive price to ensure fill: sell below trigger, buy above trigger
+            tp_slippage = 0.005  # 0.5% slippage tolerance for TP
+            if not is_buy:  # Closing long = sell, so limit below trigger
+                tp_limit = self.client.round_price(symbol, tp_px * (1 - tp_slippage))
+            else:  # Closing short = buy, so limit above trigger
+                tp_limit = self.client.round_price(symbol, tp_px * (1 + tp_slippage))
+            
             tp_order = {
                 "coin": symbol,
                 "is_buy": not is_buy,  # Opposite side to close
                 "sz": rounded_size,
-                "limit_px": tp_px,
+                "limit_px": tp_limit,  # Slippage-adjusted limit
                 "order_type": {"trigger": {
-                    "triggerPx": tp_px,
+                    "triggerPx": tp_px,  # Trigger at exact TP price
                     "isMarket": True,
                     "tpsl": "tp"
                 }},
@@ -253,14 +263,23 @@ class HLOrderManager:
             orders.append(tp_order)
         
         # Order 2: Stop Loss (reduce-only, opposite side)
+        # CRITICAL FIX: Use aggressive slippage limit price for SL market fills
         if sl_px:
+            # For SL: we're exiting at a loss, need aggressive fill
+            # Use MORE aggressive slippage for SL (1%) - MUST fill to protect capital
+            sl_slippage = 0.01  # 1% slippage tolerance for SL (critical exit)
+            if not is_buy:  # Closing long = sell, so limit below trigger
+                sl_limit = self.client.round_price(symbol, sl_px * (1 - sl_slippage))
+            else:  # Closing short = buy, so limit above trigger
+                sl_limit = self.client.round_price(symbol, sl_px * (1 + sl_slippage))
+            
             sl_order = {
                 "coin": symbol,
                 "is_buy": not is_buy,  # Opposite side to close
                 "sz": rounded_size,
-                "limit_px": sl_px,
+                "limit_px": sl_limit,  # Slippage-adjusted limit for guaranteed fill
                 "order_type": {"trigger": {
-                    "triggerPx": sl_px,
+                    "triggerPx": sl_px,  # Trigger at exact SL price
                     "isMarket": True,
                     "tpsl": "sl"
                 }},
@@ -496,16 +515,24 @@ class HLOrderManager:
         except Exception as e:
             logger.warning(f"   Failed to cancel existing orders: {e}")
         
-        # Take Profit order
+        # Take Profit order - FIXED: Use slippage-adjusted limit for guaranteed fills
         if tp_price:
             try:
                 rounded_tp = self.client.round_price(symbol, tp_price)
-                logger.info(f"   Placing TP order: {symbol} {'SELL' if is_long else 'BUY'} {rounded_size} @ trigger ${rounded_tp}")
+                # Calculate slippage-adjusted limit price
+                # TP is less critical, use 0.5% slippage
+                tp_slippage = 0.005
+                if is_long:  # Closing long = sell, limit below trigger
+                    tp_limit = self.client.round_price(symbol, tp_price * (1 - tp_slippage))
+                else:  # Closing short = buy, limit above trigger
+                    tp_limit = self.client.round_price(symbol, tp_price * (1 + tp_slippage))
+                
+                logger.info(f"   Placing TP order: {symbol} {'SELL' if is_long else 'BUY'} {rounded_size} @ trigger ${rounded_tp} (limit ${tp_limit})")
                 tp_result = self.exchange.order(
                     name=symbol,
                     is_buy=not is_long,  # Opposite side to close
                     sz=rounded_size,
-                    limit_px=rounded_tp,
+                    limit_px=tp_limit,  # Slippage-adjusted limit
                     order_type={"trigger": {
                         "triggerPx": rounded_tp,
                         "isMarket": True,
@@ -528,16 +555,23 @@ class HLOrderManager:
         else:
             logger.warning(f"⚠️ No TP price provided for {symbol}")
         
-        # Stop Loss order
+        # Stop Loss order - CRITICAL: Use aggressive slippage for guaranteed exit
         if sl_price:
             try:
                 rounded_sl = self.client.round_price(symbol, sl_price)
-                logger.info(f"   Placing SL order: {symbol} {'SELL' if is_long else 'BUY'} {rounded_size} @ trigger ${rounded_sl}")
+                # SL needs MORE aggressive slippage (1%) - MUST fill to protect capital
+                sl_slippage = 0.01
+                if is_long:  # Closing long = sell, limit below trigger
+                    sl_limit = self.client.round_price(symbol, sl_price * (1 - sl_slippage))
+                else:  # Closing short = buy, limit above trigger
+                    sl_limit = self.client.round_price(symbol, sl_price * (1 + sl_slippage))
+                
+                logger.info(f"   Placing SL order: {symbol} {'SELL' if is_long else 'BUY'} {rounded_size} @ trigger ${rounded_sl} (limit ${sl_limit})")
                 sl_result = self.exchange.order(
                     name=symbol,
                     is_buy=not is_long,  # Opposite side to close
                     sz=rounded_size,
-                    limit_px=rounded_sl,
+                    limit_px=sl_limit,  # Aggressive slippage-adjusted limit
                     order_type={"trigger": {
                         "triggerPx": rounded_sl,
                         "isMarket": True,
@@ -638,15 +672,22 @@ class HLOrderManager:
         
         results = []
         
-        # Set Take Profit using SDK order()
+        # Set Take Profit using SDK order() - with slippage-adjusted limit
         if tp_price:
             try:
                 rounded_tp = self.client.round_price(symbol, tp_price)
+                # TP slippage: 0.5% is sufficient
+                tp_slippage = 0.005
+                if is_long:  # Closing long = sell, limit below trigger
+                    tp_limit = self.client.round_price(symbol, tp_price * (1 - tp_slippage))
+                else:  # Closing short = buy, limit above trigger
+                    tp_limit = self.client.round_price(symbol, tp_price * (1 + tp_slippage))
+                
                 tp_result = self.exchange.order(
                     name=symbol,
                     is_buy=not is_long,  # Opposite side to close
                     sz=rounded_size,
-                    limit_px=rounded_tp,
+                    limit_px=tp_limit,  # Slippage-adjusted limit
                     order_type={"trigger": {
                         "triggerPx": rounded_tp,
                         "isMarket": True,
@@ -654,21 +695,28 @@ class HLOrderManager:
                     }},
                     reduce_only=True,
                 )
-                logger.info(f"✅ TP order placed for {symbol} @ ${rounded_tp}: {tp_result}")
+                logger.info(f"✅ TP order placed for {symbol} @ trigger ${rounded_tp} (limit ${tp_limit}): {tp_result}")
                 results.append({'type': 'tp', 'result': tp_result})
             except Exception as e:
                 logger.error(f"❌ TP order failed for {symbol}: {e}")
                 results.append({'type': 'tp', 'error': str(e)})
         
-        # Set Stop Loss using SDK order()
+        # Set Stop Loss using SDK order() - CRITICAL: aggressive slippage for guaranteed fill
         if sl_price:
             try:
                 rounded_sl = self.client.round_price(symbol, sl_price)
+                # SL needs MORE aggressive slippage (1%) - MUST fill to protect capital
+                sl_slippage = 0.01
+                if is_long:  # Closing long = sell, limit below trigger
+                    sl_limit = self.client.round_price(symbol, sl_price * (1 - sl_slippage))
+                else:  # Closing short = buy, limit above trigger
+                    sl_limit = self.client.round_price(symbol, sl_price * (1 + sl_slippage))
+                
                 sl_result = self.exchange.order(
                     name=symbol,
                     is_buy=not is_long,  # Opposite side to close
                     sz=rounded_size,
-                    limit_px=rounded_sl,
+                    limit_px=sl_limit,  # Aggressive slippage-adjusted limit
                     order_type={"trigger": {
                         "triggerPx": rounded_sl,
                         "isMarket": True,
@@ -676,7 +724,7 @@ class HLOrderManager:
                     }},
                     reduce_only=True,
                 )
-                logger.info(f"✅ SL order placed for {symbol} @ ${rounded_sl}: {sl_result}")
+                logger.info(f"✅ SL order placed for {symbol} @ trigger ${rounded_sl} (limit ${sl_limit}): {sl_result}")
                 results.append({'type': 'sl', 'result': sl_result})
             except Exception as e:
                 logger.error(f"❌ SL order failed for {symbol}: {e}")
@@ -988,9 +1036,29 @@ class HLOrderManager:
         
         # Step 2: Set TP/SL if entry succeeded and we have prices
         tpsl_results = []
+        tpsl_verified = False
         if filled_size > 0 and (tp_price or sl_price):
             logger.info(f"📍 Setting TP/SL: TP=${tp_price}, SL=${sl_price}")
             tpsl_results = self.set_tp_sl_sdk(symbol, filled_size, is_buy, tp_price, sl_price)
+            
+            # CRITICAL: Verify TP/SL orders were placed successfully
+            # Check for errors in results
+            tp_ok = any(r.get('type') == 'tp' and 'result' in r for r in tpsl_results) if tp_price else True
+            sl_ok = any(r.get('type') == 'sl' and 'result' in r for r in tpsl_results) if sl_price else True
+            
+            if not tp_ok or not sl_ok:
+                # TP/SL placement failed - CRITICAL! Log warning but don't fail entry
+                # Position manager will retry protection
+                failed_orders = []
+                if tp_price and not tp_ok:
+                    failed_orders.append('TP')
+                if sl_price and not sl_ok:
+                    failed_orders.append('SL')
+                logger.error(f"⚠️ CRITICAL: {', '.join(failed_orders)} order(s) failed! Position is partially unprotected!")
+                logger.error(f"   Position manager will retry protection on next scan.")
+            else:
+                tpsl_verified = True
+                logger.info(f"✅ TP/SL orders verified successfully")
         
         # Track position
         self.position_orders[symbol] = {
@@ -998,6 +1066,7 @@ class HLOrderManager:
             'is_buy': is_buy,
             'tp_price': tp_price,
             'sl_price': sl_price,
+            'tpsl_verified': tpsl_verified,
         }
         
         return {

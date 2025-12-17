@@ -289,6 +289,10 @@ class HyperAIBot:
         # Track active trades for database closing
         self._active_trade_ids: Dict[str, Dict] = {}  # symbol -> {trade_id, entry_price, quantity, side, entry_time}
         
+        # Position state persistence file (for crash recovery)
+        self._state_file = Path('data/active_trades.json')
+        self._state_file.parent.mkdir(parents=True, exist_ok=True)
+        
         # Error handler
         self.error_handler: Optional[ErrorHandler] = None
         
@@ -322,6 +326,82 @@ class HyperAIBot:
             logger.info(f"   Max Positions: {self.max_positions}")
         else:
             logger.info(f"   Symbol: {self.symbol}")
+    
+    # ==================== STATE PERSISTENCE ====================
+    def _save_active_trades(self):
+        """
+        Persist active trades to file for crash recovery.
+        Called after every trade entry/exit.
+        """
+        try:
+            data = {}
+            for symbol, info in self._active_trade_ids.items():
+                # Convert datetime to ISO string for JSON serialization
+                data[symbol] = {
+                    'trade_id': info.get('trade_id'),
+                    'entry_price': str(info.get('entry_price', 0)),
+                    'quantity': str(info.get('quantity', 0)),
+                    'side': info.get('side'),
+                    'entry_time': info.get('entry_time').isoformat() if info.get('entry_time') else None,
+                    'tp_price': str(info.get('tp_price', 0)) if info.get('tp_price') else None,
+                    'sl_price': str(info.get('sl_price', 0)) if info.get('sl_price') else None,
+                    'cloid': info.get('cloid'),
+                }
+            self._state_file.write_text(json.dumps(data, indent=2))
+            logger.debug(f"💾 Saved {len(data)} active trades to state file")
+        except Exception as e:
+            logger.error(f"Failed to save active trades state: {e}")
+    
+    def _load_active_trades(self):
+        """
+        Load persisted active trades on startup for crash recovery.
+        Returns True if trades were recovered, False otherwise.
+        """
+        try:
+            if not self._state_file.exists():
+                logger.debug("No previous state file found")
+                return False
+            
+            data = json.loads(self._state_file.read_text())
+            if not data:
+                return False
+            
+            recovered = 0
+            for symbol, info in data.items():
+                # Parse datetime from ISO string
+                entry_time = None
+                if info.get('entry_time'):
+                    try:
+                        entry_time = datetime.fromisoformat(info['entry_time'])
+                    except ValueError:
+                        entry_time = datetime.now(timezone.utc)
+                
+                self._active_trade_ids[symbol] = {
+                    'trade_id': info.get('trade_id'),
+                    'entry_price': Decimal(str(info.get('entry_price', 0))),
+                    'quantity': Decimal(str(info.get('quantity', 0))),
+                    'side': info.get('side'),
+                    'entry_time': entry_time,
+                    'tp_price': Decimal(str(info.get('tp_price'))) if info.get('tp_price') else None,
+                    'sl_price': Decimal(str(info.get('sl_price'))) if info.get('sl_price') else None,
+                    'cloid': info.get('cloid'),
+                }
+                recovered += 1
+            
+            if recovered > 0:
+                logger.info(f"🔄 Recovered {recovered} active trades from previous session")
+            return recovered > 0
+            
+        except Exception as e:
+            logger.warning(f"Failed to load active trades state: {e}")
+            return False
+    
+    def _clear_trade_state(self, symbol: str):
+        """Remove a trade from active tracking and update persistence."""
+        if symbol in self._active_trade_ids:
+            del self._active_trade_ids[symbol]
+            self._save_active_trades()
+            logger.debug(f"Cleared trade state for {symbol}")
     
     async def initialize(self) -> bool:
         """Initialize all components"""
@@ -690,6 +770,9 @@ class HyperAIBot:
         """
         Callback for real-time fill updates
         Called when orders are filled on the exchange
+        
+        HyperLiquid userFills WebSocket message format:
+        {"channel": "userFills", "data": [{"coin": "ETH", "side": "B", "px": "3150.5", ...}]}
         """
         try:
             # Handle case where fill might be a string or have nested data
@@ -700,49 +783,71 @@ class HyperAIBot:
                 logger.debug(f"Received non-dict fill: {type(fill)}")
                 return
             
-            # Extract data from nested structure if needed
-            if 'data' in fill:
-                fill = fill.get('data', {})
-                if isinstance(fill, list) and len(fill) > 0:
-                    fill = fill[0]
+            # Extract fills from nested 'data' field (HyperLiquid format)
+            fills_list = fill.get('data', [])
             
-            if not isinstance(fill, dict):
+            # Handle empty data (subscription confirmation or heartbeat)
+            if not fills_list:
+                logger.debug("Received empty userFills message (likely subscription confirmation)")
                 return
-                
-            coin = fill.get('coin', 'UNKNOWN')
-            side = fill.get('side', 'unknown')
-            size = fill.get('sz', 0)
-            price = fill.get('px', 0)
-            fee = fill.get('fee', 0)
-            closed_pnl = fill.get('closedPnl', 0)
-            cloid = fill.get('cloid')
             
-            # Format log message
-            pnl_str = f" | P&L: ${closed_pnl:+.2f}" if closed_pnl else ""
-            cloid_str = f" [cloid: {cloid}]" if cloid else ""
+            # If 'data' wasn't present, check if this is a direct fill object
+            if not fills_list and 'coin' in fill:
+                fills_list = [fill]
             
-            logger.info(f"📥 FILL: {coin} {side.upper()} {size} @ ${price} | Fee: ${fee}{pnl_str}{cloid_str}")
-            
-            # Track fill in order manager if using cloid
-            if cloid and hasattr(self.order_manager, 'track_fill'):
-                self.order_manager.track_fill(cloid, fill)
-            
-            # Schedule Telegram notification for fills (handle no event loop gracefully)
-            if self.telegram_bot and closed_pnl:  # Only notify on closes with P&L
-                try:
-                    emoji = "🟢" if side == "B" else "🔴"
-                    pnl_emoji = "✅" if closed_pnl > 0 else "❌"
-                    message = f"{emoji} **FILL**\n\n{coin} {side.upper()} {size} @ ${price}\n{pnl_emoji} Closed P&L: ${closed_pnl:+.2f}"
+            # Process each fill in the list
+            for single_fill in fills_list:
+                if not isinstance(single_fill, dict):
+                    continue
                     
-                    # Try to get running loop, if not available just skip notification
-                    try:
-                        loop = asyncio.get_running_loop()
-                        loop.create_task(self._send_order_notification(message))
-                    except RuntimeError:
-                        # No running event loop - skip async notification
-                        pass
-                except Exception:
+                coin = single_fill.get('coin', '')
+                side = single_fill.get('side', '')
+                size = single_fill.get('sz', 0)
+                price = single_fill.get('px', 0)
+                fee = single_fill.get('fee', 0)
+                closed_pnl = single_fill.get('closedPnl', 0)
+                cloid = single_fill.get('cloid')
+                
+                # Skip if no coin (invalid fill data)
+                if not coin:
+                    logger.debug(f"Skipping fill with no coin: {single_fill}")
+                    continue
+                
+                # Convert string values to float if needed
+                try:
+                    size = float(size) if size else 0
+                    price = float(price) if price else 0
+                    fee = float(fee) if fee else 0
+                    closed_pnl = float(closed_pnl) if closed_pnl else 0
+                except (ValueError, TypeError):
                     pass
+                
+                # Format log message
+                pnl_str = f" | P&L: ${closed_pnl:+.2f}" if closed_pnl else ""
+                cloid_str = f" [cloid: {cloid}]" if cloid else ""
+                
+                logger.info(f"📥 FILL: {coin} {side.upper()} {size} @ ${price} | Fee: ${fee}{pnl_str}{cloid_str}")
+                
+                # Track fill in order manager if using cloid
+                if cloid and hasattr(self.order_manager, 'track_fill'):
+                    self.order_manager.track_fill(cloid, single_fill)
+                
+                # Schedule Telegram notification for fills (handle no event loop gracefully)
+                if self.telegram_bot and closed_pnl:  # Only notify on closes with P&L
+                    try:
+                        emoji = "🟢" if side == "B" else "🔴"
+                        pnl_emoji = "✅" if closed_pnl > 0 else "❌"
+                        message = f"{emoji} **FILL**\n\n{coin} {side.upper()} {size} @ ${price}\n{pnl_emoji} Closed P&L: ${closed_pnl:+.2f}"
+                        
+                        # Try to get running loop, if not available just skip notification
+                        try:
+                            loop = asyncio.get_running_loop()
+                            loop.create_task(self._send_order_notification(message))
+                        except RuntimeError:
+                            # No running event loop - skip async notification
+                            pass
+                    except Exception:
+                        pass
                 
         except Exception as e:
             logger.error(f"Error in fill callback: {e}")
@@ -849,6 +954,8 @@ class HyperAIBot:
                                 logger.error(f"❌ Failed to close trade in DB: {db_err}")
                             finally:
                                 del self._active_trade_ids[symbol]
+                                # Persist state for crash recovery
+                                self._save_active_trades()
                         
                         # Record trade to Kelly Criterion if we have details
                         if self.kelly and symbol in self._position_details:
@@ -1037,6 +1144,28 @@ class HyperAIBot:
             
             market_data['candles'] = candles
             
+            # PRO TRADING: Fetch HTF candles for multi-timeframe confirmation
+            # Each symbol needs its own HTF candles!
+            if self.asset_manager.needs_htf_refresh(symbol):
+                htf_candles = {}
+                for interval in self._htf_intervals:
+                    if interval == self.timeframe:
+                        continue  # Skip if same as LTF
+                    try:
+                        htf_data = self.client.get_candles(symbol, interval, 50)
+                        if htf_data:
+                            htf_candles[interval] = htf_data
+                    except Exception as e:
+                        logger.debug(f"Failed to fetch {symbol} {interval} candles: {e}")
+                if htf_candles:
+                    self.asset_manager.update_htf_candles(symbol, htf_candles)
+                    logger.debug(f"📊 Updated HTF candles for {symbol}: {list(htf_candles.keys())}")
+            
+            # Add cached HTF candles to market_data
+            htf_candles = self.asset_manager.get_htf_candles(symbol)
+            if htf_candles:
+                market_data['htf_candles'] = htf_candles
+            
             # Update BTC candles for correlation (non-BTC assets)
             if symbol != 'BTC' and hasattr(strategy, 'update_btc_candles'):
                 if self._btc_candles_cache:
@@ -1069,6 +1198,11 @@ class HyperAIBot:
         self.is_running = True
         self.start_time = datetime.now(timezone.utc)
         loop_count = 0
+        
+        # CRASH RECOVERY: Load persisted trades from previous session
+        recovered = self._load_active_trades()
+        if recovered:
+            logger.info("🔄 Attempting to match recovered trades with exchange positions...")
         
         # IMMEDIATE STARTUP: Detect existing positions and protect them
         if self.position_manager:
@@ -1666,11 +1800,15 @@ class HyperAIBot:
                         'volume': market_data.get('volume')
                     }
                     
+                    # Normalize score to 0-1 range if it's a raw score (e.g., 12/25 -> 0.48)
+                    raw_signal_score = signal.get('signal_score', signal.get('confidence', 0))
+                    normalized_score = float(raw_signal_score) / 25.0 if raw_signal_score and float(raw_signal_score) > 1 else float(raw_signal_score or 0)
+                    
                     signal_id = await self.db.insert_signal(
                         symbol=signal.get('symbol', self.symbol),
                         signal_type=db_signal_type,  # Use mapped BUY/SELL
                         price=float(signal.get('entry_price', signal.get('price', 0))),
-                        confidence_score=float(signal.get('signal_score', signal.get('confidence', 0))),
+                        confidence_score=normalized_score,
                         indicators=indicators,
                         volatility=market_data.get('volatility'),
                         liquidity_score=market_data.get('liquidity_score')
@@ -1678,10 +1816,12 @@ class HyperAIBot:
                     
                     # Insert trade (check 'success' key from order execution)
                     if result.get('success'):
-                        # Extract signal score (check multiple possible keys)
+                        # Extract signal score and normalize to 0-1 range (e.g., 12/25 -> 0.48)
                         raw_score = signal.get('signal_score', signal.get('score', signal.get('confidence', 0)))
-                        confidence_score = float(raw_score) if raw_score else 0.0
-                        logger.debug(f"📊 Signal score for DB: {confidence_score} (raw={raw_score}, keys={list(signal.keys())[:10]})")
+                        raw_float = float(raw_score) if raw_score else 0.0
+                        # Normalize if score is > 1 (raw score like 12, 15, etc.)
+                        confidence_score = raw_float / 25.0 if raw_float > 1 else raw_float
+                        logger.debug(f"📊 Signal score for DB: {confidence_score:.4f} (raw={raw_score}, normalized from {raw_float})")
                         
                         trade_id = await self.db.insert_trade(
                             symbol=signal.get('symbol', self.symbol),
@@ -1708,6 +1848,9 @@ class HyperAIBot:
                             'signal_type': db_signal_type,  # Store BUY/SELL for DB
                             'entry_time': datetime.now(timezone.utc)
                         }
+                        
+                        # Persist state for crash recovery
+                        self._save_active_trades()
                         
                         logger.info(f"📊 Logged to database: signal_id={signal_id}, trade_id={trade_id}, type={db_signal_type}")
                     else:

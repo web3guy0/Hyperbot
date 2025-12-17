@@ -170,8 +170,12 @@ class SwingStrategy:
         # Signal confirmation - requires signal to persist across multiple scans
         self.signal_confirmation_required = int(os.getenv('SIGNAL_CONFIRMATION_SCANS', '3'))  # Need 3 consecutive confirmations
         self._pending_signal: Optional[Dict] = None  # Direction waiting for confirmation
+        self._pending_signal_time: Optional[datetime] = None  # CRITICAL FIX: Track when signal started
         self._confirmation_count = 0  # How many times we've seen this direction
         self._last_confirmed_direction: Optional[str] = None  # Last direction we actually traded
+        
+        # CRITICAL FIX: Signal expiry timeout (prevents stale signals after gaps)
+        self.signal_expiry_seconds = int(os.getenv('SIGNAL_EXPIRY_SECONDS', '300'))  # 5 min default
         
         # Direction lock - prevent flipping too quickly after a signal
         self.direction_lock_seconds = int(os.getenv('DIRECTION_LOCK_SECONDS', '900'))  # 15 min lock after signal
@@ -1363,6 +1367,9 @@ class SwingStrategy:
         
         In high volatility (ATR 2x+), reduce confirmation requirement.
         
+        CRITICAL FIX: Signals expire after signal_expiry_seconds to prevent stale signals
+        after market gaps or long pauses between scans.
+        
         Args:
             direction: 'long' or 'short'
             score: Current signal score
@@ -1373,6 +1380,17 @@ class SwingStrategy:
             True if signal is confirmed, False if still building confirmation
         """
         now = datetime.now(timezone.utc)
+        
+        # CRITICAL FIX: Check for signal expiry FIRST
+        # Prevents confirming stale signals after market gaps
+        if self._pending_signal is not None and self._pending_signal_time is not None:
+            signal_age = (now - self._pending_signal_time).total_seconds()
+            if signal_age > self.signal_expiry_seconds:
+                logger.warning(f"⏰ Signal expired: {self._pending_signal.get('direction', 'unknown').upper()} "
+                             f"was {signal_age:.0f}s old (max {self.signal_expiry_seconds}s)")
+                self._pending_signal = None
+                self._pending_signal_time = None
+                self._confirmation_count = 0
         
         # Adaptive confirmation based on volatility
         confirmations_needed = self.signal_confirmation_required
@@ -1393,6 +1411,7 @@ class SwingStrategy:
                 'price_at_first': float(current_price),
                 'scores': [score],
             }
+            self._pending_signal_time = now  # CRITICAL FIX: Track start time for expiry
             self._confirmation_count = 1
             logger.info(f"🔄 Signal confirmation started: {direction.upper()} (1/{confirmations_needed})")
             return False
@@ -1454,8 +1473,9 @@ class SwingStrategy:
             self._locked_direction = direction
             self._last_confirmed_direction = direction
             
-            # Reset confirmation state
+            # Reset confirmation state (including time)
             self._pending_signal = None
+            self._pending_signal_time = None
             self._confirmation_count = 0
             
             return True

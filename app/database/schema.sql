@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS trades (
     
     -- Strategy info
     strategy_name VARCHAR(50),
-    confidence_score DECIMAL(5, 4),
+    confidence_score DECIMAL(10, 4),
     
     -- Account state at trade time
     account_equity DECIMAL(18, 4),
@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS signals (
     symbol VARCHAR(20) NOT NULL,
     signal_type VARCHAR(10) NOT NULL CHECK (signal_type IN ('BUY', 'SELL')),
     price DECIMAL(18, 8) NOT NULL,
-    confidence_score DECIMAL(5, 4),
+    confidence_score DECIMAL(10, 4),
     
     -- Technical indicators at signal time
     rsi DECIMAL(10, 4),
@@ -308,3 +308,24 @@ COMMENT ON TABLE account_snapshots IS 'Regular snapshots of account state and me
 COMMENT ON TABLE performance_metrics IS 'Aggregated performance statistics by time period';
 COMMENT ON TABLE market_data IS 'Historical market OHLCV data for backtesting';
 COMMENT ON TABLE system_events IS 'Bot events, errors, and system logs';
+
+-- Migration: Alter confidence_score columns to handle larger values
+-- This is safe to run multiple times (idempotent)
+DO $$
+BEGIN
+    -- Alter trades.confidence_score if it exists and is too small
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'trades' AND column_name = 'confidence_score'
+    ) THEN
+        ALTER TABLE trades ALTER COLUMN confidence_score TYPE DECIMAL(10, 4);
+    END IF;
+    
+    -- Alter signals.confidence_score if it exists and is too small
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'signals' AND column_name = 'confidence_score'
+    ) THEN
+        ALTER TABLE signals ALTER COLUMN confidence_score TYPE DECIMAL(10, 4);
+    END IF;
+END $$;

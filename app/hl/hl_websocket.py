@@ -1,10 +1,13 @@
 """
 HyperLiquid WebSocket - Ultra-Lean SDK Passthrough
 Uses SDK info.subscribe() for all real-time data.
+
+CRITICAL FIX: Added reconnection handling with exponential backoff
 """
 import os
 import asyncio
 import threading
+import time
 from typing import Optional, Dict, Any, Callable, List, Set
 from hyperliquid.info import Info
 from hyperliquid.utils import constants
@@ -31,21 +34,30 @@ class HLWebSocket:
     
     def __init__(self, address: str, testnet: bool = False):
         self.address = address
+        self.testnet = testnet
         
         # Get RPC URL from env or use SDK defaults
         if testnet:
-            base_url = os.getenv('TESTNET_RPC_URL', constants.TESTNET_API_URL)
+            self.base_url = os.getenv('TESTNET_RPC_URL', constants.TESTNET_API_URL)
         else:
-            base_url = os.getenv('MAINNET_RPC_URL', constants.MAINNET_API_URL)
+            self.base_url = os.getenv('MAINNET_RPC_URL', constants.MAINNET_API_URL)
         
         # SDK Info with WebSocket enabled
-        self.info = Info(base_url, skip_ws=False)
+        self.info = Info(self.base_url, skip_ws=False)
         
         # Callbacks by subscription type
         self._callbacks: Dict[str, List[Callable]] = {}
         self._active_subs: Set[str] = set()
         self._running = False
         self._thread: Optional[threading.Thread] = None
+        
+        # CRITICAL FIX: Reconnection state
+        self._reconnect_attempts = 0
+        self._max_reconnect_attempts = 10
+        self._reconnect_base_delay = 1.0  # seconds
+        self._reconnect_max_delay = 60.0  # seconds
+        self._last_message_time: Optional[float] = None
+        self._heartbeat_timeout = 60.0  # seconds without message = consider disconnected
         
         # Market data cache (populated by subscriptions)
         self._market_data: Dict[str, Dict[str, Any]] = {}
@@ -65,6 +77,10 @@ class HLWebSocket:
     
     def _dispatch(self, sub_type: str, data: Any):
         """Dispatch data to registered callbacks."""
+        # CRITICAL FIX: Track message time for heartbeat monitoring
+        self._last_message_time = time.time()
+        self._reconnect_attempts = 0  # Reset on successful message
+        
         for cb in self._callbacks.get(sub_type, []):
             try:
                 cb(data)
@@ -216,6 +232,7 @@ class HLWebSocket:
         if self._running:
             return
         self._running = True
+        self._last_message_time = time.time()
         logger.info("WebSocket started")
     
     def stop(self):
@@ -226,8 +243,93 @@ class HLWebSocket:
         logger.info("WebSocket stopped")
     
     def is_connected(self) -> bool:
-        """Check if WebSocket is active."""
-        return self._running and len(self._active_subs) > 0
+        """Check if WebSocket is active and healthy."""
+        if not self._running or len(self._active_subs) == 0:
+            return False
+        
+        # CRITICAL FIX: Check if we've received messages recently
+        if self._last_message_time is not None:
+            time_since_message = time.time() - self._last_message_time
+            if time_since_message > self._heartbeat_timeout:
+                logger.warning(f"⚠️ WebSocket stale: {time_since_message:.0f}s since last message")
+                return False
+        
+        return True
+    
+    def needs_reconnect(self) -> bool:
+        """Check if WebSocket needs reconnection."""
+        if not self._running:
+            return False
+        
+        if self._last_message_time is None:
+            return False
+        
+        time_since_message = time.time() - self._last_message_time
+        return time_since_message > self._heartbeat_timeout
+    
+    def reconnect(self) -> bool:
+        """
+        Attempt to reconnect WebSocket with exponential backoff.
+        
+        Returns:
+            True if reconnection successful, False otherwise
+        """
+        if self._reconnect_attempts >= self._max_reconnect_attempts:
+            logger.error(f"❌ Max reconnection attempts ({self._max_reconnect_attempts}) reached")
+            return False
+        
+        # Calculate delay with exponential backoff
+        delay = min(
+            self._reconnect_base_delay * (2 ** self._reconnect_attempts),
+            self._reconnect_max_delay
+        )
+        
+        self._reconnect_attempts += 1
+        logger.warning(f"🔄 WebSocket reconnection attempt {self._reconnect_attempts}/{self._max_reconnect_attempts} "
+                      f"(waiting {delay:.1f}s)")
+        
+        time.sleep(delay)
+        
+        try:
+            # Re-create info object
+            self.info = Info(self.base_url, skip_ws=False)
+            
+            # Re-subscribe to all active subscriptions
+            active_subs_copy = self._active_subs.copy()
+            self._active_subs.clear()
+            
+            for sub in active_subs_copy:
+                # Parse subscription type and re-subscribe
+                # Format: "type" or "type:symbol" or "type:symbol:interval"
+                parts = sub.split(':')
+                sub_type = parts[0]
+                
+                if sub_type == 'allMids':
+                    self.subscribe_all_mids()
+                elif sub_type == 'l2Book' and len(parts) > 1:
+                    self.subscribe_l2_book(parts[1])
+                elif sub_type == 'trades' and len(parts) > 1:
+                    self.subscribe_trades(parts[1])
+                elif sub_type == 'candle' and len(parts) > 2:
+                    self.subscribe_candles(parts[1], parts[2])
+                elif sub_type == 'userEvents':
+                    self.subscribe_user_events()
+                elif sub_type == 'userFills':
+                    self.subscribe_user_fills()
+                elif sub_type == 'orderUpdates':
+                    self.subscribe_order_updates()
+                elif sub_type == 'userFundings':
+                    self.subscribe_user_fundings()
+                elif sub_type == 'bbo' and len(parts) > 1:
+                    self.subscribe_bbo(parts[1])
+            
+            self._last_message_time = time.time()
+            logger.info(f"✅ WebSocket reconnected successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ WebSocket reconnection failed: {e}")
+            return False
     
     @property
     def active_subscriptions(self) -> Set[str]:
