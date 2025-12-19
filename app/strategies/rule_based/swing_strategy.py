@@ -91,9 +91,11 @@ class SwingStrategy:
         #   - OBV/CMF divergence against direction: -2 points
         #   - HTF misalignment: -3 points
         #
-        # HIGH WIN RATE MODE: Require 12+ points for 70%+ win rate
-        # This means signals need strong multi-indicator confluence
-        self.min_signal_score = int(os.getenv('MIN_SIGNAL_SCORE', '12'))  # 12/25 = 48% (but realistic max is ~18)
+        # ADAPTIVE THRESHOLD based on regime:
+        #   - TRENDING: Higher threshold (safer in strong moves)
+        #   - RANGING: Lower threshold (mean reversion opportunities)
+        self.min_signal_score = int(os.getenv('MIN_SIGNAL_SCORE', '12'))
+        self.ranging_threshold_reduction = int(os.getenv('RANGING_THRESHOLD_REDUCTION', '4'))  # Lower by 4 in ranging
         self.max_signal_score = 25  # Full theoretical range
         
         # Penalty thresholds for critical failures
@@ -317,33 +319,54 @@ class SwingStrategy:
         self._long_score_history.append(long_enhanced)
         self._short_score_history.append(short_enhanced)
         
-        # Log scores every time for visibility (INFO level for debugging signal generation)
-        if long_enhanced > 5 or short_enhanced > 5:  # Only log if at least some score
-            logger.info(f"📊 Scores: LONG={long_enhanced}/{self.max_signal_score} | SHORT={short_enhanced}/{self.max_signal_score} | Regime={regime.value} | Threshold={self.min_signal_score}")
+        # ==================== ADAPTIVE THRESHOLD ====================
+        # Lower threshold in ranging markets (mean reversion is more reliable)
+        # Higher threshold in trending markets (need stronger confirmation)
+        from app.strategies.adaptive.market_regime import MarketRegime
+        if regime == MarketRegime.RANGING:
+            effective_threshold = max(8, self.min_signal_score - self.ranging_threshold_reduction)
+        elif regime in (MarketRegime.TRENDING_UP, MarketRegime.TRENDING_DOWN):
+            effective_threshold = self.min_signal_score + 2  # Stricter in trends
+        else:
+            effective_threshold = self.min_signal_score
+        
+        # OPTIMIZED LOGGING: Only log when scores change significantly or approaching threshold
+        # This prevents log spam (was logging every 2 seconds!)
+        score_changed = (
+            not hasattr(self, '_last_logged_scores') or
+            abs(long_enhanced - self._last_logged_scores.get('long', 0)) >= 2 or
+            abs(short_enhanced - self._last_logged_scores.get('short', 0)) >= 2 or
+            long_enhanced >= effective_threshold - 3 or  # Getting close to threshold
+            short_enhanced >= effective_threshold - 3
+        )
+        
+        if score_changed and (long_enhanced > 5 or short_enhanced > 5):
+            logger.info(f"📊 Scores: LONG={long_enhanced}/{self.max_signal_score} | SHORT={short_enhanced}/{self.max_signal_score} | Regime={regime.value} | Threshold={effective_threshold}")
+            self._last_logged_scores = {'long': long_enhanced, 'short': short_enhanced}
         
         # Determine best direction
-        if long_enhanced >= self.min_signal_score and long_enhanced > short_enhanced:
+        if long_enhanced >= effective_threshold and long_enhanced > short_enhanced:
             direction = 'long'
             score = long_enhanced
             score_details = long_details
-            logger.info(f"✅ LONG wins: {long_enhanced} vs SHORT {short_enhanced}")
-        elif short_enhanced >= self.min_signal_score and short_enhanced > long_enhanced:
+            logger.info(f"✅ LONG wins: {long_enhanced} vs SHORT {short_enhanced} (threshold={effective_threshold})")
+        elif short_enhanced >= effective_threshold and short_enhanced > long_enhanced:
             direction = 'short'
             score = short_enhanced
             score_details = short_details
-            logger.info(f"✅ SHORT wins: {short_enhanced} vs LONG {long_enhanced}")
+            logger.info(f"✅ SHORT wins: {short_enhanced} vs LONG {long_enhanced} (threshold={effective_threshold})")
         else:
             # No valid signal - reset confirmation
             self._pending_signal = None
             self._confirmation_count = 0
             if long_enhanced > 0 or short_enhanced > 0:
-                logger.debug(f"⏳ No signal: LONG={long_enhanced}/{self.min_signal_score}, SHORT={short_enhanced}/{self.min_signal_score} (need {self.min_signal_score}+)")
+                logger.debug(f"⏳ No signal: LONG={long_enhanced}/{effective_threshold}, SHORT={short_enhanced}/{effective_threshold} (need {effective_threshold}+)")
             return None
         
         # ==================== CRITICAL: HARD COUNTER-TREND BLOCK ====================
         # This is a HARD REJECTION, not just a penalty. Counter-trend trades are the
         # primary cause of losses in trending markets.
-        from app.strategies.adaptive.market_regime import MarketRegime
+        # NOTE: This does NOT apply in RANGING - ranging allows both directions
         if direction == 'long' and regime == MarketRegime.TRENDING_DOWN:
             logger.warning(f"🚫 HARD BLOCK: Cannot LONG in TRENDING_DOWN regime - rejecting signal")
             self._pending_signal = None

@@ -134,10 +134,11 @@ logging.getLogger('telegram.ext').setLevel(logging.WARNING)
 shutdown_event = asyncio.Event()
 
 def signal_handler(signum: int, frame: Optional[FrameType]) -> None:
-    """Handle shutdown signals"""
-    logger.info("\n🛑 Shutdown requested...")
+    """Handle shutdown signals - must be fast, just set the flag"""
+    logger.info("\n🛑 Shutdown signal received, cleaning up...")
     shutdown_event.set()
 
+# Register signal handlers
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
@@ -1599,8 +1600,10 @@ class HyperAIBot:
                     if loop_count % 100 == 0:
                         logger.info(f"📊 Loop #{loop_count} - Trades: {self.trades_executed} - P&L: ${self.session_pnl:+.2f}")
                     
-                    # Loop delay
-                    await asyncio.sleep(1)
+                    # Loop delay - adaptive based on timeframe
+                    # 1m = 1s, 5m = 5s, 15m = 15s (no need to scan faster than candles update)
+                    scan_delay = {'1m': 1, '5m': 5, '15m': 15, '1h': 30, '4h': 60}.get(self.timeframe, 1)
+                    await asyncio.sleep(scan_delay)
                     
                 except Exception as e:
                     error_str = str(e).lower()
