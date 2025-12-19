@@ -355,3 +355,65 @@ class KeyboardFactory:
             [InlineKeyboardButton("🏠 Menu", callback_data="main_menu")],
         ]
         return InlineKeyboardMarkup(keyboard)
+    
+    # ==================== NEW: TRADING KEYBOARDS ====================
+    
+    @staticmethod
+    def trade_confirm(symbol: str, action: str, size_pct: float = None) -> InlineKeyboardMarkup:
+        """Create trade confirmation keyboard."""
+        size_str = f"_{size_pct}" if size_pct else ""
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "✅ CONFIRM TRADE", 
+                    callback_data=f"execute_{action}_{symbol}{size_str}"
+                ),
+            ],
+            [
+                InlineKeyboardButton("❌ Cancel", callback_data="main_menu"),
+            ],
+        ]
+        return InlineKeyboardMarkup(keyboard)
+    
+    @staticmethod
+    def killswitch_actions(trading_allowed: bool) -> InlineKeyboardMarkup:
+        """Create kill switch action buttons."""
+        if trading_allowed:
+            keyboard = [
+                [
+                    InlineKeyboardButton("🛑 STOP ALL TRADING", callback_data="ks_stop"),
+                ],
+                [
+                    InlineKeyboardButton("🏠 Back", callback_data="main_menu"),
+                ],
+            ]
+        else:
+            keyboard = [
+                [
+                    InlineKeyboardButton("✅ RESUME TRADING", callback_data="ks_resume"),
+                ],
+                [
+                    InlineKeyboardButton("🏠 Back", callback_data="main_menu"),
+                ],
+            ]
+        return InlineKeyboardMarkup(keyboard)
+    
+    @staticmethod
+    def quick_trade_menu() -> InlineKeyboardMarkup:
+        """Create quick trade menu."""
+        keyboard = [
+            [
+                InlineKeyboardButton("📈 LONG SOL", callback_data="quick_buy_SOL"),
+                InlineKeyboardButton("📉 SHORT SOL", callback_data="quick_sell_SOL"),
+            ],
+            [
+                InlineKeyboardButton("📈 LONG ETH", callback_data="quick_buy_ETH"),
+                InlineKeyboardButton("📉 SHORT ETH", callback_data="quick_sell_ETH"),
+            ],
+            [
+                InlineKeyboardButton("📈 LONG BTC", callback_data="quick_buy_BTC"),
+                InlineKeyboardButton("📉 SHORT BTC", callback_data="quick_sell_BTC"),
+            ],
+            [InlineKeyboardButton("🏠 Menu", callback_data="main_menu")],
+        ]
+        return InlineKeyboardMarkup(keyboard)

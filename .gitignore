@@ -1,0 +1,203 @@
+# =============================================================================
+# HyperBot .gitignore
+# =============================================================================
+
+# ========================= SECRETS & CREDENTIALS =========================
+# CRITICAL: Never commit API keys, secrets, or credentials!
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+secrets/
+credentials/
+
+# ========================= PYTHON =========================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+*.pyd
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+.env.bak/
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Type checkers
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+
+# ========================= LOGS =========================
+*.log
+logs/
+log/
+*.log.*
+hyperbot.log*
+errors.log*
+hl_client/*.log
+hl_order_manager/*.log
+hl_websocket/*.log
+
+# ========================= DATA & STATE =========================
+# Trade data (contains sensitive trading history)
+data/
+*.jsonl
+*.json
+!.env.example
+
+# Position state files
+bot_positions.json
+position_state.json
+
+# Cache directories
+.cache/
+cache/
+tmp/
+temp/
+
+# ========================= IDE & EDITORS =========================
+# VSCode
+.vscode/
+*.code-workspace
+
+# PyCharm
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Sublime Text
+*.sublime-workspace
+*.sublime-project
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+
+# ========================= OS SPECIFIC =========================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+
+# ========================= ML & DATA SCIENCE =========================
+# Model files (can be large)
+ml/models/saved/
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+*.joblib
+*.pt
+*.pth
+*.onnx
+
+# Jupyter Notebooks checkpoints
+.ipynb_checkpoints/
+*.ipynb
+
+# ========================= TESTING =========================
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# ========================= DATABASE =========================
+*.db
+*.sqlite
+*.sqlite3
+*.sql.bak
+
+# ========================= MISC =========================
+# Debug scripts (if you don't want them tracked)
+# Uncomment if you want to ignore debug scripts:
+# debug_*.py
+# test_*.py
+# diagnose_*.py
+# score_breakdown.py
+# quick_signal_test.py
+
+# Compiled files
+*.o
+*.a
+*.lib
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# Documentation builds
+docs/_build/
+site/
+
+# Node modules (if any frontend)
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# ========================= PROJECT SPECIFIC =========================
+# Old/unused directories
+hl_client/
+hl_order_manager/
+hl_websocket/
+
+# PM2 ecosystem (contains possible secrets)
+# ecosystem.config.js  # uncomment if you put secrets here
+
+# Service files (system-specific paths)
+# hyperbot.service  # uncomment if you have system-specific paths

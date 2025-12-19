@@ -483,29 +483,39 @@ class MessageFormatter:
 ─────── 📈 Market ───────────
 /market  • Current prices & data
 /regime  • Market regime analysis
+/signal [symbol] • Full analysis
+/assets  • Configured assets
 
-─────── 🎛️ Control ──────────
-/start   • Resume trading
-/pause   • Pause trading
-/close   • Close position
+─────── 🎛️ Trading ──────────
+/buy [symbol] [%] • Open LONG
+/sell [symbol] [%] • Open SHORT
+/close [symbol] • Close position
 /closeall • Close all positions
 
 ─────── 🎯 Risk Management ──
 /sl [symbol] [price] • Set stop loss
 /tp [symbol] [price] • Set take profit
 /managed • View managed positions
+/risk    • Risk status
+/killswitch • Emergency stop
 
 ─────── 📊 Analytics ────────
 /stats   • Performance stats
+/report  • Full performance report
 /kelly   • Kelly sizing info
 /db      • Database stats
+/tier    • Account tier info
 
 ─────── ⚙️ Settings ─────────
 /alerts  • Configure notifications
 /config  • View configuration
-
-─────── ℹ️ Other ─────────────
-/help    • This help menu
 /logs    • Recent logs
 
-💡 Tip: Tap buttons below for quick access!"""
+─────── ℹ️ Help ─────────────
+/help    • This help menu
+/menu    • Main menu
+
+💡 Tips:
+• Use /signal SOL for live analysis
+• Use /tier to see your account settings
+• Use /report for performance review"""

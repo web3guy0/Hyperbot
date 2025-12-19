@@ -68,23 +68,23 @@ class SmallAccountMode:
         self.is_small_account = account_balance < 100
         
         # Determine tier
-        if account_balance < 30:
+        if account_balance < 50:
             self.tier = 'micro'
-            self.recommended_leverage = 15
+            self.recommended_leverage = 10  # High enough to meet minimums, not crazy
             self.max_positions = 1
-            self.min_signal_score = 20  # Only A+ setups (80%)
-            self.target_pct = Decimal('3.0')  # Larger targets
-            self.stop_pct = Decimal('1.2')  # Wider stops
+            self.min_signal_score = 18  # Only 72%+ setups (18/25)
+            self.target_pct = Decimal('2.5')  # Realistic targets
+            self.stop_pct = Decimal('1.0')  # Tight but not too tight
         elif account_balance < 100:
             self.tier = 'small'
-            self.recommended_leverage = 10
+            self.recommended_leverage = 7
             self.max_positions = 1
-            self.min_signal_score = 18  # 72%
-            self.target_pct = Decimal('2.5')
-            self.stop_pct = Decimal('1.0')
+            self.min_signal_score = 16  # 64%
+            self.target_pct = Decimal('2.0')
+            self.stop_pct = Decimal('0.8')
         elif account_balance < 500:
             self.tier = 'starter'
-            self.recommended_leverage = 7
+            self.recommended_leverage = 5
             self.max_positions = 2
             self.min_signal_score = 15  # 60%
             self.target_pct = Decimal('2.0')
@@ -93,7 +93,7 @@ class SmallAccountMode:
             self.tier = 'normal'
             self.recommended_leverage = 5
             self.max_positions = 3
-            self.min_signal_score = 15  # 60%
+            self.min_signal_score = 12  # 48% - default threshold
             self.target_pct = Decimal('2.0')
             self.stop_pct = Decimal('0.8')
         

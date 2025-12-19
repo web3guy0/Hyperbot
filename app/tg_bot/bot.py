@@ -211,6 +211,20 @@ class TelegramBot:
             ("config", self._cmd_config),
             ("signal", self._cmd_signal),
             ("analyze", self._cmd_signal),  # Alias
+            # NEW: Quick trading commands
+            ("buy", self._cmd_buy),
+            ("sell", self._cmd_sell),
+            ("long", self._cmd_buy),  # Alias
+            ("short", self._cmd_sell),  # Alias
+            # NEW: Account & reports
+            ("tier", self._cmd_tier),
+            ("account", self._cmd_tier),  # Alias
+            ("report", self._cmd_report),
+            ("performance", self._cmd_report),  # Alias
+            # NEW: Risk commands
+            ("risk", self._cmd_risk),
+            ("killswitch", self._cmd_killswitch),
+            ("ks", self._cmd_killswitch),  # Alias
         ]
         
         for cmd, handler in commands:
@@ -1035,6 +1049,300 @@ class TelegramBot:
             await self._edit_or_reply(
                 update,
                 self.fmt.format_error("Config Error", str(e)),
+                self.kb.back_to_menu()
+            )
+    
+    # ==================== NEW: QUICK TRADING COMMANDS ====================
+    
+    async def _cmd_buy(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /buy [symbol] [size%] - Quick long position."""
+        try:
+            if not context.args:
+                await self._edit_or_reply(
+                    update,
+                    "📈 *QUICK BUY (LONG)*\n\n"
+                    "Usage: `/buy SYMBOL [size%]`\n\n"
+                    "Examples:\n"
+                    "• `/buy SOL` - Default size\n"
+                    "• `/buy SOL 25` - 25% of balance\n\n"
+                    "_This opens a LONG position_",
+                    self.kb.back_to_menu()
+                )
+                return
+            
+            symbol = context.args[0].upper()
+            size_pct = float(context.args[1]) if len(context.args) > 1 else None
+            
+            # Get current price
+            price = await self.bot.client.get_market_price(symbol)
+            
+            # Confirm trade
+            size_text = f"{size_pct}%" if size_pct else "Default"
+            message = (
+                f"📈 *CONFIRM LONG TRADE*\n\n"
+                f"Symbol: {symbol}\n"
+                f"Price: ${float(price):,.4f}\n"
+                f"Size: {size_text}\n\n"
+                f"⚠️ Are you sure?"
+            )
+            await self._edit_or_reply(update, message, self.kb.trade_confirm(symbol, 'buy', size_pct))
+        except Exception as e:
+            await self._edit_or_reply(
+                update,
+                self.fmt.format_error("Buy Error", str(e)),
+                self.kb.back_to_menu()
+            )
+    
+    async def _cmd_sell(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /sell [symbol] [size%] - Quick short position."""
+        try:
+            if not context.args:
+                await self._edit_or_reply(
+                    update,
+                    "📉 *QUICK SELL (SHORT)*\n\n"
+                    "Usage: `/sell SYMBOL [size%]`\n\n"
+                    "Examples:\n"
+                    "• `/sell SOL` - Default size\n"
+                    "• `/sell SOL 25` - 25% of balance\n\n"
+                    "_This opens a SHORT position_",
+                    self.kb.back_to_menu()
+                )
+                return
+            
+            symbol = context.args[0].upper()
+            size_pct = float(context.args[1]) if len(context.args) > 1 else None
+            
+            # Get current price
+            price = await self.bot.client.get_market_price(symbol)
+            
+            # Confirm trade
+            size_text = f"{size_pct}%" if size_pct else "Default"
+            message = (
+                f"📉 *CONFIRM SHORT TRADE*\n\n"
+                f"Symbol: {symbol}\n"
+                f"Price: ${float(price):,.4f}\n"
+                f"Size: {size_text}\n\n"
+                f"⚠️ Are you sure?"
+            )
+            await self._edit_or_reply(update, message, self.kb.trade_confirm(symbol, 'sell', size_pct))
+        except Exception as e:
+            await self._edit_or_reply(
+                update,
+                self.fmt.format_error("Sell Error", str(e)),
+                self.kb.back_to_menu()
+            )
+    
+    async def _cmd_tier(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /tier command - Show account tier and settings."""
+        try:
+            balance = float(self.bot.account_value)
+            
+            # Determine tier
+            if balance < 50:
+                tier = "🔴 MICRO"
+                tier_emoji = "🐜"
+                leverage = "10x"
+                max_pos = 1
+                signal_req = "18/25"
+                advice = "Focus on quality over quantity. Wait for A+ setups only."
+            elif balance < 100:
+                tier = "🟠 SMALL"
+                tier_emoji = "🐰"
+                leverage = "7x"
+                max_pos = 1
+                signal_req = "16/25"
+                advice = "Build consistency. One trade at a time."
+            elif balance < 500:
+                tier = "🟡 STARTER"
+                tier_emoji = "🦊"
+                leverage = "5x"
+                max_pos = 2
+                signal_req = "15/25"
+                advice = "Diversify slightly. Good risk management."
+            else:
+                tier = "🟢 NORMAL"
+                tier_emoji = "🦁"
+                leverage = "5x"
+                max_pos = 3
+                signal_req = "12/25"
+                advice = "Full strategy enabled. Stay disciplined."
+            
+            lines = [
+                f"{tier_emoji} *ACCOUNT TIER: {tier}*",
+                "",
+                "═══════ STATUS ═══════",
+                f"💰 Balance: ${balance:,.2f}",
+                f"📊 Leverage: {leverage}",
+                f"📍 Max Positions: {max_pos}",
+                f"🎯 Signal Threshold: {signal_req}",
+                "",
+                "═══════ TIER BRACKETS ═══════",
+                f"{'→' if balance < 50 else '•'} Micro: < $50",
+                f"{'→' if 50 <= balance < 100 else '•'} Small: $50 - $100",
+                f"{'→' if 100 <= balance < 500 else '•'} Starter: $100 - $500",
+                f"{'→' if balance >= 500 else '•'} Normal: > $500",
+                "",
+                "═══════ ADVICE ═══════",
+                f"💡 _{advice}_",
+            ]
+            
+            await self._edit_or_reply(update, "\n".join(lines), self.kb.back_to_menu())
+        except Exception as e:
+            await self._edit_or_reply(
+                update,
+                self.fmt.format_error("Tier Error", str(e)),
+                self.kb.back_to_menu()
+            )
+    
+    async def _cmd_report(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /report command - Performance report."""
+        try:
+            if not self.bot.db:
+                await self._edit_or_reply(update, "❌ Database not connected", self.kb.back_to_menu())
+                return
+            
+            # Get stats from database
+            stats = await self.bot.db.get_total_stats()
+            pnl_data = await self._get_pnl_data()
+            
+            total_trades = stats.get('total_trades') or 0
+            win_rate = (stats.get('win_rate') or 0)
+            total_pnl = stats.get('total_pnl') or 0
+            
+            # Calculate averages
+            avg_win = stats.get('avg_win') or 0
+            avg_loss = stats.get('avg_loss') or 0
+            
+            # Profit factor
+            gross_profit = stats.get('gross_profit') or 0
+            gross_loss = abs(stats.get('gross_loss') or 1)
+            profit_factor = gross_profit / gross_loss if gross_loss > 0 else 0
+            
+            lines = [
+                "📊 *PERFORMANCE REPORT*",
+                "",
+                "═══════ OVERALL ═══════",
+                f"📈 Total Trades: {int(total_trades)}",
+                f"🎯 Win Rate: {self.fmt.format_percent(float(win_rate))}",
+                f"💰 Total P&L: {self.fmt.format_money(float(total_pnl), sign=True)}",
+                f"📊 Profit Factor: {profit_factor:.2f}",
+                "",
+                "═══════ AVERAGES ═══════",
+                f"✅ Avg Win: {self.fmt.format_money(float(avg_win), sign=True)}",
+                f"❌ Avg Loss: {self.fmt.format_money(float(avg_loss), sign=True)}",
+                f"📊 Expectancy: {self.fmt.format_money((float(win_rate)/100 * float(avg_win)) + ((100-float(win_rate))/100 * float(avg_loss)), sign=True)}/trade",
+                "",
+                "═══════ PERIODS ═══════",
+                f"📅 Today: {self.fmt.format_money(pnl_data.get('today_pnl', 0), sign=True)}",
+                f"📆 This Week: {self.fmt.format_money(pnl_data.get('weekly_pnl', 0), sign=True)}",
+                f"📆 This Month: {self.fmt.format_money(pnl_data.get('monthly_pnl', 0), sign=True)}",
+                "",
+                "═══════ SESSION ═══════",
+                f"⏰ Uptime: {self.fmt.format_uptime(self.session_start)}",
+                f"💹 Session P&L: {self.fmt.format_money(pnl_data.get('session_pnl', 0), sign=True)}",
+            ]
+            
+            # Rating
+            if total_trades >= 20:
+                if win_rate >= 65 and profit_factor >= 1.5:
+                    rating = "⭐⭐⭐⭐⭐ EXCELLENT"
+                elif win_rate >= 55 and profit_factor >= 1.2:
+                    rating = "⭐⭐⭐⭐ GOOD"
+                elif win_rate >= 45 and profit_factor >= 1.0:
+                    rating = "⭐⭐⭐ AVERAGE"
+                else:
+                    rating = "⭐⭐ NEEDS WORK"
+                lines.extend(["", f"📊 Rating: {rating}"])
+            else:
+                lines.extend(["", f"_Need {20 - int(total_trades)} more trades for rating_"])
+            
+            await self._edit_or_reply(update, "\n".join(lines), self.kb.back_to_menu())
+        except Exception as e:
+            logger.error(f"Report error: {e}", exc_info=True)
+            await self._edit_or_reply(
+                update,
+                self.fmt.format_error("Report Error", str(e)),
+                self.kb.back_to_menu()
+            )
+    
+    async def _cmd_risk(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /risk command - Show risk status."""
+        try:
+            balance = float(self.bot.account_value)
+            margin = float(self.bot.margin_used)
+            
+            # Get drawdown info
+            peak = float(getattr(self.bot, 'peak_equity', balance))
+            drawdown = ((peak - balance) / peak * 100) if peak > 0 else 0
+            
+            # Get kill switch status
+            ks = getattr(self.bot, 'kill_switch', None)
+            ks_active = not getattr(ks, 'trading_allowed', True) if ks else False
+            consec_losses = getattr(ks, 'consecutive_losses', 0) if ks else 0
+            
+            # Margin usage
+            margin_pct = (margin / balance * 100) if balance > 0 else 0
+            
+            # Risk level
+            if drawdown > 10 or margin_pct > 70 or ks_active:
+                risk_level = "🔴 HIGH RISK"
+            elif drawdown > 5 or margin_pct > 50:
+                risk_level = "🟠 ELEVATED"
+            else:
+                risk_level = "🟢 NORMAL"
+            
+            lines = [
+                f"🛡️ *RISK STATUS: {risk_level}*",
+                "",
+                "═══════ DRAWDOWN ═══════",
+                f"💰 Current: ${balance:,.2f}",
+                f"📈 Peak: ${peak:,.2f}",
+                f"📉 Drawdown: {self.fmt.format_percent(drawdown)}",
+                f"⚠️ Max Allowed: {os.getenv('MAX_DRAWDOWN_PCT', '10')}%",
+                "",
+                "═══════ MARGIN ═══════",
+                f"📊 Used: {self.fmt.format_money(margin)}",
+                f"📊 Usage: {self.fmt.format_percent(margin_pct)}",
+                "",
+                "═══════ KILL SWITCH ═══════",
+                f"🔴 Status: {'TRIGGERED' if ks_active else '✅ Normal'}",
+                f"📉 Consecutive Losses: {consec_losses}",
+                f"⚠️ Trigger at: 3 losses",
+            ]
+            
+            await self._edit_or_reply(update, "\n".join(lines), self.kb.back_to_menu())
+        except Exception as e:
+            await self._edit_or_reply(
+                update,
+                self.fmt.format_error("Risk Error", str(e)),
+                self.kb.back_to_menu()
+            )
+    
+    async def _cmd_killswitch(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /killswitch command - Emergency stop/resume."""
+        try:
+            ks = getattr(self.bot, 'kill_switch', None)
+            
+            if not ks:
+                await self._edit_or_reply(
+                    update,
+                    "⚠️ Kill Switch not initialized",
+                    self.kb.back_to_menu()
+                )
+                return
+            
+            current_status = getattr(ks, 'trading_allowed', True)
+            
+            message = (
+                f"🔴 *KILL SWITCH*\n\n"
+                f"Current Status: {'✅ Trading Allowed' if current_status else '🛑 STOPPED'}\n\n"
+                f"What would you like to do?"
+            )
+            await self._edit_or_reply(update, message, self.kb.killswitch_actions(current_status))
+        except Exception as e:
+            await self._edit_or_reply(
+                update,
+                self.fmt.format_error("Kill Switch Error", str(e)),
                 self.kb.back_to_menu()
             )
     
