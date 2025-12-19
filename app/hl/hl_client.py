@@ -45,7 +45,13 @@ class HyperLiquidClient:
             base_url = os.getenv('MAINNET_RPC_URL', constants.MAINNET_API_URL)
         
         # Direct SDK instances - use these for all operations
-        self.exchange = Exchange(self.wallet, base_url)
+        # CRITICAL: Pass account_address to Exchange so it trades on the correct account
+        # This allows using an API wallet (api_secret) to trade on behalf of main wallet (account_address)
+        self.exchange = Exchange(
+            wallet=self.wallet,
+            base_url=base_url,
+            account_address=account_address if account_address != self.wallet.address else None
+        )
         self.info = Info(base_url, skip_ws=True)
         
         # WebSocket reference (set by bot.py after initialization)
