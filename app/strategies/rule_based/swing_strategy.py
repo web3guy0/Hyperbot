@@ -320,14 +320,14 @@ class SwingStrategy:
         self._short_score_history.append(short_enhanced)
         
         # ==================== ADAPTIVE THRESHOLD ====================
-        # Lower threshold in ranging markets (mean reversion is more reliable)
-        # Higher threshold in trending markets (need stronger confirmation)
+        # Same threshold for all regimes now - let the scoring system handle regime differences
+        # The regime bonuses/penalties in _calculate_enhanced_score already adjust scores
         from app.strategies.adaptive.market_regime import MarketRegime
         if regime == MarketRegime.RANGING:
-            effective_threshold = max(8, self.min_signal_score - self.ranging_threshold_reduction)
-        elif regime in (MarketRegime.TRENDING_UP, MarketRegime.TRENDING_DOWN):
-            effective_threshold = self.min_signal_score + 2  # Stricter in trends
+            # Slightly lower in ranging for mean-reversion
+            effective_threshold = max(6, self.min_signal_score - self.ranging_threshold_reduction)
         else:
+            # Use base threshold for trending/volatile/unknown
             effective_threshold = self.min_signal_score
         
         # OPTIMIZED LOGGING: Only log when scores change significantly or approaching threshold
@@ -340,7 +340,7 @@ class SwingStrategy:
             short_enhanced >= effective_threshold - 3
         )
         
-        if score_changed and (long_enhanced > 5 or short_enhanced > 5):
+        if score_changed and (long_enhanced > 3 or short_enhanced > 3):
             logger.info(f"📊 Scores: LONG={long_enhanced}/{self.max_signal_score} | SHORT={short_enhanced}/{self.max_signal_score} | Regime={regime.value} | Threshold={effective_threshold}")
             self._last_logged_scores = {'long': long_enhanced, 'short': short_enhanced}
         

@@ -119,6 +119,7 @@ class TelegramBot:
                 .read_timeout(30)
                 .write_timeout(30)
                 .connect_timeout(30)
+                .pool_timeout(30)
                 .build()
             )
             
@@ -128,7 +129,13 @@ class TelegramBot:
             # Start bot
             await self.application.initialize()
             await self.application.start()
-            await self.application.updater.start_polling(drop_pending_updates=True)
+            
+            # Start polling with error callback for network issues
+            await self.application.updater.start_polling(
+                drop_pending_updates=True,
+                allowed_updates=['message', 'callback_query'],
+                error_callback=self._handle_polling_error,
+            )
             
             self.is_running = True
             
@@ -144,6 +151,14 @@ class TelegramBot:
         except Exception as e:
             logger.error(f"Failed to start Telegram bot: {e}")
             raise
+    
+    async def _handle_polling_error(self, error: Exception):
+        """Handle polling errors (network issues, etc.) without crashing."""
+        error_str = str(error).lower()
+        if 'network' in error_str or 'timeout' in error_str or 'read' in error_str:
+            logger.warning(f"⚠️ Telegram network error (will retry): {error.__class__.__name__}")
+        else:
+            logger.error(f"❌ Telegram polling error: {error}")
     
     async def stop(self):
         """Stop the Telegram bot gracefully."""
