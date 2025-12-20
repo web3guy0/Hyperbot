@@ -22,6 +22,11 @@ module.exports = {
     min_uptime: '10s',
     restart_delay: 5000,
     
+    // Graceful shutdown - give bot time to cleanup
+    kill_timeout: 5000,  // 5 seconds before SIGKILL
+    wait_ready: true,
+    listen_timeout: 10000,
+    
     // Memory management
     max_memory_restart: '500M',
     

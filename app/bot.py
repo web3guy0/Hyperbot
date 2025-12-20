@@ -135,8 +135,15 @@ shutdown_event = asyncio.Event()
 
 def signal_handler(signum: int, frame: Optional[FrameType]) -> None:
     """Handle shutdown signals - must be fast, just set the flag"""
-    logger.info("\n🛑 Shutdown signal received, cleaning up...")
+    # Use print instead of logger to avoid async issues in signal handler
+    print("\n🛑 Shutdown signal received, cleaning up...")
     shutdown_event.set()
+    # Schedule immediate loop wakeup if running
+    try:
+        loop = asyncio.get_running_loop()
+        loop.call_soon_threadsafe(shutdown_event.set)
+    except RuntimeError:
+        pass  # No running loop
 
 # Register signal handlers
 signal.signal(signal.SIGINT, signal_handler)

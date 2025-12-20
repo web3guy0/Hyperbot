@@ -253,21 +253,31 @@ class MarketRegimeDetector:
                 old_regime = self.current_regime
                 self.current_regime = regime
                 self.regime_start_time = datetime.now(timezone.utc)
+                # Pre-fill history with initial regime to prevent immediate flip
+                for _ in range(3):
+                    self.regime_history.append(regime)
                 logger.info(f"📊 Initial regime detected: {regime.value} (confidence: {confidence:.1%})")
             else:
-                # Subsequent changes need confirmation
-                recent = list(self.regime_history)[-3:] if len(self.regime_history) >= 3 else list(self.regime_history)
-                regime_count = sum(1 for r in recent if r == regime)
-                
-                if regime_count >= 2:  # Confirmed - regime seen at least 2x in last 3 checks
-                    old_regime = self.current_regime
-                    self.current_regime = regime
-                    self.regime_start_time = datetime.now(timezone.utc)
-                    logger.info(f"🔄 Regime changed: {old_regime.value} → {regime.value} (confidence: {confidence:.1%})")
+                # Subsequent changes need STRONG confirmation:
+                # - Minimum 5 samples in history
+                # - New regime seen at least 3x in last 5 checks (60% majority)
+                # This prevents rapid flip-flopping
+                if len(self.regime_history) < 5:
+                    logger.debug(f"📊 Regime candidate: {regime.value} (building history, {len(self.regime_history)}/5)")
+                    regime = self.current_regime  # Keep current until we have enough history
                 else:
-                    # Not confirmed yet - keep current regime but log at debug level
-                    logger.debug(f"📊 Regime candidate: {regime.value} (awaiting confirmation, count={regime_count}/2)")
-                    regime = self.current_regime  # Return current regime, not the candidate
+                    recent = list(self.regime_history)[-5:]
+                    regime_count = sum(1 for r in recent if r == regime)
+                    
+                    if regime_count >= 3:  # Confirmed - 60% majority
+                        old_regime = self.current_regime
+                        self.current_regime = regime
+                        self.regime_start_time = datetime.now(timezone.utc)
+                        logger.info(f"🔄 Regime changed: {old_regime.value} → {regime.value} (confidence: {confidence:.1%})")
+                    else:
+                        # Not confirmed yet - keep current regime
+                        logger.debug(f"📊 Regime candidate: {regime.value} (awaiting confirmation, {regime_count}/3 needed)")
+                        regime = self.current_regime  # Return current regime, not the candidate
         
         self.regime_confidence = confidence
         
