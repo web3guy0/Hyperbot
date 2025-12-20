@@ -797,8 +797,13 @@ class TelegramBot:
                 
                 # Truncate line for display
                 display_line = line[:80] if len(line) > 80 else line
-                # Remove characters that break markdown
-                display_line = display_line.replace('*', '').replace('_', '').replace('`', '')
+                # Remove ALL characters that could break Telegram markdown
+                # This includes: * _ ` [ ] ( ) ~ > # + - = | { } . !
+                for char in ['*', '_', '`', '[', ']', '(', ')', '~', '>', '#', '+', '=', '|', '{', '}']:
+                    display_line = display_line.replace(char, '')
+                # Replace - carefully (keep as separator, remove at start)
+                if display_line.startswith('-'):
+                    display_line = display_line[1:].strip()
                 formatted.append(f"{emoji} {display_line}")
             
             if formatted:

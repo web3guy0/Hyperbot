@@ -733,6 +733,19 @@ class SwingStrategy:
             score += 2.0  # Bonus for trend alignment
             details['regime_bonus'] = {'score': 2.0, 'reason': 'Trading WITH trend'}
             logger.debug(f"   ✅ Regime: +2.0 (Trading WITH {regime.value})")
+        elif regime == MarketRegime.RANGING:
+            # RANGING MARKET BONUS: Mean-reversion setups are valid here
+            # Give bonus based on RSI extremes (buy oversold, sell overbought)
+            rsi = indicators.get('rsi')
+            if rsi:
+                if direction == 'long' and rsi < 40:
+                    score += 1.5  # Oversold in ranging = good long entry
+                    details['ranging_bonus'] = {'score': 1.5, 'reason': 'Oversold in ranging (mean-reversion)'}
+                    logger.debug(f"   ✅ Ranging Bonus: +1.5 (Oversold RSI={rsi:.0f} for LONG)")
+                elif direction == 'short' and rsi > 60:
+                    score += 1.5  # Overbought in ranging = good short entry
+                    details['ranging_bonus'] = {'score': 1.5, 'reason': 'Overbought in ranging (mean-reversion)'}
+                    logger.debug(f"   ✅ Ranging Bonus: +1.5 (Overbought RSI={rsi:.0f} for SHORT)")
         
         # ========== SUPERTREND (CRITICAL) ==========
         # This is a key trend filter - trading against supertrend is risky
@@ -759,16 +772,18 @@ class SwingStrategy:
                 }
                 logger.debug(f"   ✅ Supertrend: +{st_score:.1f} ({st_result.direction.value}, strength={st_result.strength:.1f}%)")
             else:
-                # Against supertrend - HEAVY PENALTY (this is dangerous!)
-                score -= self.supertrend_penalty  # -3 points
-                details['penalties'].append({'type': 'supertrend', 'score': -self.supertrend_penalty, 'reason': f'Against {st_result.direction.value}'})
+                # Against supertrend - penalty (but reduced in ranging markets)
+                # In ranging markets, supertrend whipsaws more, so be lenient
+                penalty = self.supertrend_penalty if regime != MarketRegime.RANGING else self.supertrend_penalty * 0.5
+                score -= penalty
+                details['penalties'].append({'type': 'supertrend', 'score': -penalty, 'reason': f'Against {st_result.direction.value}'})
                 details['supertrend'] = {
                     'aligned': False,
                     'direction': st_result.direction.value,
-                    'score': -self.supertrend_penalty,
-                    'warning': 'Trading against trend!'
+                    'score': -penalty,
+                    'warning': 'Trading against trend!' if regime != MarketRegime.RANGING else 'Against supertrend (ranging - reduced penalty)'
                 }
-                logger.debug(f"   ⛔ SUPERTREND PENALTY: -{self.supertrend_penalty} (AGAINST {st_result.direction.value} trend!)")
+                logger.debug(f"   ⛔ SUPERTREND PENALTY: -{penalty:.1f} (AGAINST {st_result.direction.value} trend!)")
         
         # ========== DONCHIAN CHANNEL (0-1.5 points) ==========
         dc_result = self.donchian.calculate(candles)
