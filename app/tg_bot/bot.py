@@ -152,8 +152,11 @@ class TelegramBot:
             logger.error(f"Failed to start Telegram bot: {e}")
             raise
     
-    async def _handle_polling_error(self, error: Exception):
-        """Handle polling errors (network issues, etc.) without crashing."""
+    def _handle_polling_error(self, error: Exception):
+        """Handle polling errors (network issues, etc.) without crashing.
+        
+        Note: This MUST be a regular function, not async - python-telegram-bot requirement.
+        """
         error_str = str(error).lower()
         if 'network' in error_str or 'timeout' in error_str or 'read' in error_str:
             logger.warning(f"⚠️ Telegram network error (will retry): {error.__class__.__name__}")
