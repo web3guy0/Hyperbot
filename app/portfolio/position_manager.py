@@ -688,31 +688,74 @@ class PositionManager:
             if not candles or len(candles) < 20:
                 return PositionHealth.GOOD  # Not enough data
             
-            # Get current price
+            # Get current price from candles
             current_price = candles[-1].get('close', 0)
             entry = position.entry_price
             
-            # Calculate current profit
+            # Calculate current profit from candles
             if position.side == 'long':
                 profit_pct = (current_price - entry) / entry * 100
             else:
                 profit_pct = (entry - current_price) / entry * 100
             
-            # Check 1: Major loss (more than half of SL)
-            if profit_pct < -float(self.default_sl_pct) / 2:
-                # Losing significantly - check if setup still valid
-                
-                # Simple momentum check using recent candles
+            # ALSO use tracked PnL from position (more accurate from exchange)
+            tracked_pnl = position.unrealized_pnl_pct
+            # Use the worse of the two (most conservative)
+            profit_pct = min(profit_pct, tracked_pnl)
+            
+            logger.debug(f"Health check {position.symbol}: candle_pnl={profit_pct:.2f}%, tracked_pnl={tracked_pnl:.2f}%")
+            
+            # Check 1: Major loss - EXIT AGGRESSIVELY for small accounts
+            # Old logic waited for 4+ bearish candles - too late!
+            # New logic: Exit when loss exceeds 50% of typical SL AND momentum against us
+            half_sl = float(self.default_sl_pct) / 2
+            
+            if profit_pct < -half_sl:
+                # Already losing significantly - check momentum
                 recent = candles[-5:]
+                
                 if position.side == 'long':
-                    # For long: if all recent candles are bearish, setup failed
                     bearish_count = sum(1 for c in recent if c['close'] < c['open'])
-                    if bearish_count >= 4:
+                    # AGGRESSIVE: Exit if 3+ bearish candles (was 4+)
+                    if bearish_count >= 3:
+                        logger.warning(f"🚨 MOMENTUM FAILURE: {bearish_count}/5 bearish candles + {profit_pct:.2f}% loss")
+                        return PositionHealth.CRITICAL
+                    
+                    # NEW: Also exit if making new lows
+                    current_price = candles[-1].get('close', 0)
+                    recent_low = min(c.get('low', c.get('close', 0)) for c in recent)
+                    if current_price <= recent_low:
+                        logger.warning(f"🚨 MAKING NEW LOWS: Price at {current_price:.4f} = recent low")
                         return PositionHealth.CRITICAL
                 else:
-                    # For short: if all recent candles are bullish, setup failed
                     bullish_count = sum(1 for c in recent if c['close'] > c['open'])
-                    if bullish_count >= 4:
+                    if bullish_count >= 3:
+                        logger.warning(f"🚨 MOMENTUM FAILURE: {bullish_count}/5 bullish candles + {profit_pct:.2f}% loss")
+                        return PositionHealth.CRITICAL
+                    
+                    # NEW: Also exit if making new highs (bad for shorts)
+                    current_price = candles[-1].get('close', 0)
+                    recent_high = max(c.get('high', c.get('close', 0)) for c in recent)
+                    if current_price >= recent_high:
+                        logger.warning(f"🚨 MAKING NEW HIGHS: Price at {current_price:.4f} = recent high")
+                        return PositionHealth.CRITICAL
+            
+            # NEW CHECK: Super aggressive exit if approaching SL
+            # Why wait until SL? Cut losses at 80% of SL distance
+            sl_threshold = float(self.default_sl_pct) * 0.8
+            if profit_pct < -sl_threshold:
+                logger.warning(f"🚨 APPROACHING SL: {profit_pct:.2f}% loss (threshold: -{sl_threshold:.2f}%)")
+                # Check if ANY momentum against us
+                recent = candles[-3:]  # Just last 3 candles
+                if position.side == 'long':
+                    bearish_count = sum(1 for c in recent if c['close'] < c['open'])
+                    if bearish_count >= 2:
+                        logger.warning(f"   {bearish_count}/3 recent candles bearish - EXITING EARLY")
+                        return PositionHealth.CRITICAL
+                else:
+                    bullish_count = sum(1 for c in recent if c['close'] > c['open'])
+                    if bullish_count >= 2:
+                        logger.warning(f"   {bullish_count}/3 recent candles bullish - EXITING EARLY")
                         return PositionHealth.CRITICAL
             
             # Check 2: Gave back too much profit
