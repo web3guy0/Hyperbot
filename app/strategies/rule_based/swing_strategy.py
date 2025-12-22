@@ -111,9 +111,15 @@ class SwingStrategy:
         self.rsi_period = 14
         self.ema_fast = 21
         self.ema_slow = 50
+        self.ema_trend = 200  # NEW: Major trend filter (institutional line in the sand)
         self.adx_period = 14
         self.atr_period = 14
         self.bb_period = 20
+        
+        # ADX trend strength thresholds
+        self.adx_trending = 25   # ADX > 25 = trending market
+        self.adx_strong_trend = 40  # ADX > 40 = very strong trend
+        self.adx_weak = 20       # ADX < 20 = ranging/weak market
         
         # RSI thresholds (adaptive based on regime)
         self.rsi_oversold_base = 30
@@ -150,6 +156,8 @@ class SwingStrategy:
         
         # NEW: Professional momentum and volume indicators
         # StochRSI: More sensitive than RSI for overbought/oversold extremes
+        # NOTE: Redundant with RSI - can be disabled via USE_STOCH_RSI=false
+        self.use_stoch_rsi = os.getenv('USE_STOCH_RSI', 'false').lower() == 'true'  # Disabled by default (RSI is enough)
         self.stoch_rsi = StochRSICalculator(
             rsi_period=int(os.getenv('STOCH_RSI_PERIOD', '14')),
             stoch_period=14,  # Use same as RSI period
@@ -157,6 +165,8 @@ class SwingStrategy:
             d_smooth=int(os.getenv('STOCH_RSI_D', '3'))
         )
         # OBV: Volume-price confirmation, detects accumulation/distribution
+        # NOTE: Redundant with CMF - can be disabled via USE_OBV=false
+        self.use_obv = os.getenv('USE_OBV', 'false').lower() == 'true'  # Disabled by default (CMF is better for crypto)
         self.obv_calculator = OBVCalculator()
         # CMF: Chaikin Money Flow - institutional buying/selling pressure
         self.cmf_calculator = ChaikinMoneyFlow(
@@ -674,10 +684,19 @@ class SwingStrategy:
         rsi = indicators.get('rsi')
         ema_fast = indicators.get('ema_fast')
         ema_slow = indicators.get('ema_slow')
+        ema_200 = indicators.get('ema_200')  # Major trend filter
         adx = indicators.get('adx')
         macd = indicators.get('macd', {})
         
         if direction == 'long':
+            # EMA 200 FILTER (Critical - institutional line in the sand)
+            # Price below EMA 200 = DON'T LONG (fighting major trend)
+            if ema_200 and current_price < ema_200:
+                score -= 3  # Heavy penalty for counter-major-trend
+                logger.debug(f"   ⚠️ EMA200 FILTER: Price ${current_price:.2f} < EMA200 ${ema_200:.2f} - LONG penalty -3")
+            elif ema_200 and current_price > ema_200:
+                score += 0.5  # Small bonus for trend alignment
+            
             # RSI condition (0-1 point) - STRICT for high win rate
             # Only give full points for genuinely favorable conditions
             if rsi and rsi < 40:
@@ -690,12 +709,14 @@ class SwingStrategy:
             if ema_fast and ema_slow and ema_fast > ema_slow:
                 score += 1
             
-            # ADX trend strength (0-1 point)
-            if adx and adx > 25:  # Raised from 20 to 25 for stronger trends
-                if regime in [MarketRegime.TRENDING_UP, MarketRegime.TRENDING_DOWN]:
+            # ADX trend strength (0-1 point) - Enhanced logic
+            if adx:
+                if adx > self.adx_strong_trend:  # Very strong trend (>40)
                     score += 1
-                else:
-                    score += 0.5
+                elif adx > self.adx_trending:  # Trending (>25)
+                    score += 0.75
+                elif adx < self.adx_weak:  # Weak/Ranging (<20)
+                    score += 0.25  # Less confidence
             
             # MACD (0-1 point)
             if macd.get('histogram') and macd['histogram'] > 0:
@@ -704,6 +725,14 @@ class SwingStrategy:
                 score += 0.5
         
         else:  # short
+            # EMA 200 FILTER (Critical - institutional line in the sand)
+            # Price above EMA 200 = DON'T SHORT (fighting major trend)
+            if ema_200 and current_price > ema_200:
+                score -= 3  # Heavy penalty for counter-major-trend
+                logger.debug(f"   ⚠️ EMA200 FILTER: Price ${current_price:.2f} > EMA200 ${ema_200:.2f} - SHORT penalty -3")
+            elif ema_200 and current_price < ema_200:
+                score += 0.5  # Small bonus for trend alignment
+            
             # RSI condition - STRICT for high win rate
             if rsi and rsi > 60:
                 score += 1  # Truly overbought - excellent short entry
@@ -715,12 +744,14 @@ class SwingStrategy:
             if ema_fast and ema_slow and ema_fast < ema_slow:
                 score += 1
             
-            # ADX trend strength
-            if adx and adx > 20:
-                if regime in [MarketRegime.TRENDING_UP, MarketRegime.TRENDING_DOWN]:
+            # ADX trend strength - Enhanced logic
+            if adx:
+                if adx > self.adx_strong_trend:  # Very strong trend (>40)
                     score += 1
-                else:
-                    score += 0.5
+                elif adx > self.adx_trending:  # Trending (>25)
+                    score += 0.75
+                elif adx < self.adx_weak:  # Weak/Ranging (<20)
+                    score += 0.25  # Less confidence
             
             # MACD
             if macd.get('histogram') and macd['histogram'] < 0:
@@ -982,94 +1013,98 @@ class SwingStrategy:
         
         # ========== STOCH RSI (0-1.5 points) ==========
         # More sensitive than regular RSI for detecting extreme conditions
-        stoch_result = self.stoch_rsi.calculate(candles)
-        if stoch_result:
-            stoch_score = 0.0
-            stoch_reason = ""
-            
-            # Score based on zone and crossover alignment with direction
-            if direction == 'long':
-                if stoch_result.zone == 'oversold':
-                    stoch_score = 1.0
-                    stoch_reason = f"Oversold (K={stoch_result.k_line:.1f})"
-                    if stoch_result.crossover == 'bullish':
-                        stoch_score = 1.5
-                        stoch_reason += " + bullish crossover"
-                elif stoch_result.zone == 'overbought':
-                    stoch_score = -0.5
-                    stoch_reason = f"Overbought warning (K={stoch_result.k_line:.1f})"
-            else:  # short
-                if stoch_result.zone == 'overbought':
-                    stoch_score = 1.0
-                    stoch_reason = f"Overbought (K={stoch_result.k_line:.1f})"
-                    if stoch_result.crossover == 'bearish':
-                        stoch_score = 1.5
-                        stoch_reason += " + bearish crossover"
-                elif stoch_result.zone == 'oversold':
-                    stoch_score = -0.5
-                    stoch_reason = f"Oversold warning (K={stoch_result.k_line:.1f})"
-            
-            if stoch_score != 0:
-                score += stoch_score
-                details['stoch_rsi'] = {
-                    'score': stoch_score,
-                    'k': stoch_result.k_line,
-                    'd': stoch_result.d_line,
-                    'zone': stoch_result.zone,
-                    'crossover': stoch_result.crossover,
-                    'reason': stoch_reason
-                }
-                logger.debug(f"   StochRSI: {stoch_score:+.1f} ({stoch_reason})")
+        # NOTE: Disabled by default (redundant with RSI). Enable with USE_STOCH_RSI=true
+        if self.use_stoch_rsi:
+            stoch_result = self.stoch_rsi.calculate(candles)
+            if stoch_result:
+                stoch_score = 0.0
+                stoch_reason = ""
+                
+                # Score based on zone and crossover alignment with direction
+                if direction == 'long':
+                    if stoch_result.zone == 'oversold':
+                        stoch_score = 1.0
+                        stoch_reason = f"Oversold (K={stoch_result.k_line:.1f})"
+                        if stoch_result.crossover == 'bullish':
+                            stoch_score = 1.5
+                            stoch_reason += " + bullish crossover"
+                    elif stoch_result.zone == 'overbought':
+                        stoch_score = -0.5
+                        stoch_reason = f"Overbought warning (K={stoch_result.k_line:.1f})"
+                else:  # short
+                    if stoch_result.zone == 'overbought':
+                        stoch_score = 1.0
+                        stoch_reason = f"Overbought (K={stoch_result.k_line:.1f})"
+                        if stoch_result.crossover == 'bearish':
+                            stoch_score = 1.5
+                            stoch_reason += " + bearish crossover"
+                    elif stoch_result.zone == 'oversold':
+                        stoch_score = -0.5
+                        stoch_reason = f"Oversold warning (K={stoch_result.k_line:.1f})"
+                
+                if stoch_score != 0:
+                    score += stoch_score
+                    details['stoch_rsi'] = {
+                        'score': stoch_score,
+                        'k': stoch_result.k_line,
+                        'd': stoch_result.d_line,
+                        'zone': stoch_result.zone,
+                        'crossover': stoch_result.crossover,
+                        'reason': stoch_reason
+                    }
+                    logger.debug(f"   StochRSI: {stoch_score:+.1f} ({stoch_reason})")
         
         # ========== OBV - On Balance Volume (0-1.5 points, -1 for divergence) ==========
         # Volume-price confirmation from institutional trading
-        obv_result = self.obv_calculator.calculate(candles)
-        if obv_result:
-            obv_score = 0.0
-            obv_reason = ""
-            
-            # Divergence is a strong reversal signal
-            if obv_result.divergence == 'bullish' and direction == 'long':
-                obv_score = 1.5
-                obv_reason = "Bullish OBV divergence (accumulation)"
-            elif obv_result.divergence == 'bearish' and direction == 'short':
-                obv_score = 1.5
-                obv_reason = "Bearish OBV divergence (distribution)"
-            # Divergence against our direction is a warning
-            elif obv_result.divergence == 'bullish' and direction == 'short':
-                obv_score = -1.0
-                obv_reason = "⚠️ Bullish divergence vs short"
-            elif obv_result.divergence == 'bearish' and direction == 'long':
-                obv_score = -1.0
-                obv_reason = "⚠️ Bearish divergence vs long"
-            # Trend confirmation
-            elif direction == 'long' and obv_result.trend == 'rising':
-                obv_score = 1.0 if obv_result.strength > 0.5 else 0.5
-                obv_reason = f"OBV rising (strength={obv_result.strength:.1f})"
-            elif direction == 'short' and obv_result.trend == 'falling':
-                obv_score = 1.0 if obv_result.strength > 0.5 else 0.5
-                obv_reason = f"OBV falling (strength={obv_result.strength:.1f})"
-            # Against trend
-            elif direction == 'long' and obv_result.trend == 'falling':
-                obv_score = -0.5
-                obv_reason = "OBV falling vs long"
-            elif direction == 'short' and obv_result.trend == 'rising':
-                obv_score = -0.5
-                obv_reason = "OBV rising vs short"
-            
-            if obv_score != 0:
-                score += obv_score
-                details['obv'] = {
-                    'score': obv_score,
-                    'trend': obv_result.trend,
-                    'strength': obv_result.strength,
-                    'divergence': obv_result.divergence,
-                    'reason': obv_reason
-                }
-                if obv_score > 0:
-                    logger.debug(f"   OBV: {obv_score:+.1f} (trend={obv_result.trend}, {obv_reason})")
-                else:
-                    logger.debug(f"   OBV: {obv_score:+.1f} ⚠️ ({obv_reason})")
+        # NOTE: Disabled by default (redundant with CMF). Enable with USE_OBV=true
+        if self.use_obv:
+            obv_result = self.obv_calculator.calculate(candles)
+            if obv_result:
+                obv_score = 0.0
+                obv_reason = ""
+                
+                # Divergence is a strong reversal signal
+                if obv_result.divergence == 'bullish' and direction == 'long':
+                    obv_score = 1.5
+                    obv_reason = "Bullish OBV divergence (accumulation)"
+                elif obv_result.divergence == 'bearish' and direction == 'short':
+                    obv_score = 1.5
+                    obv_reason = "Bearish OBV divergence (distribution)"
+                # Divergence against our direction is a warning
+                elif obv_result.divergence == 'bullish' and direction == 'short':
+                    obv_score = -1.0
+                    obv_reason = "⚠️ Bullish divergence vs short"
+                elif obv_result.divergence == 'bearish' and direction == 'long':
+                    obv_score = -1.0
+                    obv_reason = "⚠️ Bearish divergence vs long"
+                # Trend confirmation
+                elif direction == 'long' and obv_result.trend == 'rising':
+                    obv_score = 1.0 if obv_result.strength > 0.5 else 0.5
+                    obv_reason = f"OBV rising (strength={obv_result.strength:.1f})"
+                elif direction == 'short' and obv_result.trend == 'falling':
+                    obv_score = 1.0 if obv_result.strength > 0.5 else 0.5
+                    obv_reason = f"OBV falling (strength={obv_result.strength:.1f})"
+                # Against trend
+                elif direction == 'long' and obv_result.trend == 'falling':
+                    obv_score = -0.5
+                    obv_reason = "OBV falling vs long"
+                elif direction == 'short' and obv_result.trend == 'rising':
+                    obv_score = -0.5
+                    obv_reason = "OBV rising vs short"
+                
+                if obv_score != 0:
+                    score += obv_score
+                    details['obv'] = {
+                        'score': obv_score,
+                        'trend': obv_result.trend,
+                        'strength': obv_result.strength,
+                        'divergence': obv_result.divergence,
+                        'reason': obv_reason
+                    }
+                    if obv_score > 0:
+                        logger.debug(f"   OBV: {obv_score:+.1f} (trend={obv_result.trend}, {obv_reason})")
+                    else:
+                        logger.debug(f"   OBV: {obv_score:+.1f} ⚠️ ({obv_reason})")
         
         # ========== CMF - Chaikin Money Flow (0-1.5 points) ==========
         # Institutional buying/selling pressure
@@ -1175,6 +1210,7 @@ class SwingStrategy:
             'rsi': self._calculate_rsi(prices),
             'ema_fast': self._calculate_ema(prices, self.ema_fast),
             'ema_slow': self._calculate_ema(prices, self.ema_slow),
+            'ema_200': self._calculate_ema(prices, self.ema_trend),  # Major trend filter
             'adx': self._calculate_adx(candles),
             'atr': self._calculate_atr(candles),
             'macd': self._calculate_macd(prices),
