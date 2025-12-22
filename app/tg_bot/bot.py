@@ -164,38 +164,45 @@ class TelegramBot:
             logger.error(f"❌ Telegram polling error: {error}")
     
     async def stop(self):
-        """Stop the Telegram bot gracefully."""
+        """Stop the Telegram bot gracefully - fast for PM2."""
         if not self.is_running:
             return
         
+        self.is_running = False  # Set immediately to stop loops
+        
         try:
-            # Cancel background tasks
+            # Cancel background tasks immediately
             if self._status_task and not self._status_task.done():
                 self._status_task.cancel()
+            
+            # Skip shutdown message - takes too long
+            # Stop application with short timeout
+            if self.application:
                 try:
-                    await self._status_task
-                except asyncio.CancelledError:
+                    if self.application.updater and self.application.updater.running:
+                        await asyncio.wait_for(
+                            self.application.updater.stop(),
+                            timeout=0.5
+                        )
+                except asyncio.TimeoutError:
+                    pass
+                except Exception:
+                    pass
+                
+                try:
+                    await asyncio.wait_for(
+                        self.application.stop(),
+                        timeout=0.5
+                    )
+                except asyncio.TimeoutError:
+                    pass
+                except Exception:
                     pass
             
-            # Send shutdown message
-            try:
-                await self.send_message("🛑 *BOT SHUTTING DOWN*\n\nGoodbye!")
-            except Exception:
-                pass
-            
-            # Stop application
-            if self.application:
-                if self.application.updater:
-                    await self.application.updater.stop()
-                await self.application.stop()
-                await self.application.shutdown()
-            
-            self.is_running = False
             logger.info("✅ Telegram Bot stopped")
             
         except Exception as e:
             logger.error(f"Error stopping Telegram bot: {e}")
-            self.is_running = False
     
     def _register_handlers(self):
         """Register all command and callback handlers."""

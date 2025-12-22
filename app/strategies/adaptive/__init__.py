@@ -26,6 +26,7 @@ from .donchian import DonchianChannel, DonchianPosition, DonchianResult
 from .stoch_rsi import StochRSICalculator, StochRSIResult
 from .obv import OBVCalculator, OBVResult
 from .cmf import ChaikinMoneyFlow, CMFResult
+from .human_logic import HumanTradingLogic, TrapType, TrapSignal, MeanReversionSignal
 
 __all__ = [
     # Market Analysis
@@ -56,4 +57,9 @@ __all__ = [
     'OBVResult',
     'ChaikinMoneyFlow',
     'CMFResult',
+    # Human-Like Trading Intelligence
+    'HumanTradingLogic',
+    'TrapType',
+    'TrapSignal',
+    'MeanReversionSignal',
 ]

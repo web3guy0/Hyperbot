@@ -41,6 +41,8 @@ from app.strategies.adaptive.donchian import DonchianChannel, DonchianPosition
 from app.strategies.adaptive.stoch_rsi import StochRSICalculator
 from app.strategies.adaptive.obv import OBVCalculator
 from app.strategies.adaptive.cmf import ChaikinMoneyFlow
+# NEW: Human-like trading intelligence (anti-chase, mean reversion, stop hunt detection)
+from app.strategies.adaptive.human_logic import HumanTradingLogic
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +163,15 @@ class SwingStrategy:
             period=int(os.getenv('CMF_PERIOD', '20'))
         )
         
+        # NEW: Human-like trading intelligence
+        # This prevents the bot from:
+        # 1. Chasing green candles (buying AFTER the move)
+        # 2. Getting stopped out by liquidity sweeps
+        # 3. Fighting mean reversion in ranging markets
+        self.human_logic = HumanTradingLogic()
+        self.use_human_logic = os.getenv('USE_HUMAN_LOGIC', 'true').lower() == 'true'
+        self.human_logic_weight = float(os.getenv('HUMAN_LOGIC_WEIGHT', '2.0'))  # Score multiplier for human signals
+        
         # State tracking - BE PATIENT, DON'T OVERTRADE
         self.last_signal_time: Optional[datetime] = None
         self.signal_cooldown_seconds = int(os.getenv('SWING_COOLDOWN', '600'))  # 10 min between signals (was 5)
@@ -211,6 +222,12 @@ class SwingStrategy:
         logger.info(f"   Base Position: {self.base_position_size}%")
         logger.info(f"   Signal Threshold: {self.min_signal_score}/{self.max_signal_score}")
         logger.info(f"   Components: Regime, SMC, MTF, OrderFlow, Sessions, AdaptiveRisk")
+        if self.use_human_logic:
+            logger.info(f"   🧠 HUMAN LOGIC: ENABLED (weight={self.human_logic_weight})")
+            logger.info(f"      - Anti-chase: Prevents buying after green candles")
+            logger.info(f"      - Sweep detection: Enters AFTER stop hunts")
+            logger.info(f"      - Mean reversion: Buy low, sell high in ranges")
+            logger.info(f"      - Smart stops: Placed beyond liquidity zones")
     
     async def generate_signal(
         self,
@@ -314,6 +331,69 @@ class SwingStrategy:
         # Apply enhanced scoring (VWAP, Divergence, Volume)
         long_enhanced, long_details = self._calculate_enhanced_score('long', candles, indicators, long_score)
         short_enhanced, short_details = self._calculate_enhanced_score('short', candles, indicators, short_score)
+        
+        # ==================== HUMAN-LIKE TRADING INTELLIGENCE ====================
+        # This is the KEY CHANGE: Think like a human who has been burned by:
+        # 1. Chasing green candles (buying after the move)
+        # 2. Getting stopped out by liquidity sweeps
+        # 3. Fighting mean reversion in ranging markets
+        
+        if self.use_human_logic:
+            human_analysis = self.human_logic.analyze(candles, indicators, current_price)
+            
+            if human_analysis.get('valid'):
+                # Check for confirmed liquidity sweeps (HIGHEST PRIORITY)
+                confirmed_sweeps = human_analysis.get('sweeps', [])
+                if confirmed_sweeps:
+                    latest_sweep = confirmed_sweeps[-1]
+                    sweep_direction = latest_sweep['recommended_direction']
+                    sweep_strength = latest_sweep['strength']
+                    
+                    # BOOST the direction that aligns with sweep
+                    if sweep_direction == 'long':
+                        long_enhanced += self.human_logic_weight * sweep_strength * 3
+                        logger.info(f"🎯 HUMAN LOGIC: Bullish sweep confirmed! LONG +{self.human_logic_weight * sweep_strength * 3:.1f}")
+                    else:
+                        short_enhanced += self.human_logic_weight * sweep_strength * 3
+                        logger.info(f"🎯 HUMAN LOGIC: Bearish sweep confirmed! SHORT +{self.human_logic_weight * sweep_strength * 3:.1f}")
+                
+                # Check for traps (bull/bear traps) - second priority
+                traps = human_analysis.get('traps', [])
+                if traps:
+                    latest_trap = traps[-1]
+                    trap_direction = latest_trap.recommended_direction
+                    trap_strength = latest_trap.strength
+                    
+                    if trap_direction == 'long':
+                        long_enhanced += self.human_logic_weight * trap_strength * 2
+                        logger.info(f"🪤 HUMAN LOGIC: Bear trap! LONG +{self.human_logic_weight * trap_strength * 2:.1f}")
+                    else:
+                        short_enhanced += self.human_logic_weight * trap_strength * 2
+                        logger.info(f"🪤 HUMAN LOGIC: Bull trap! SHORT +{self.human_logic_weight * trap_strength * 2:.1f}")
+                
+                # Check for mean reversion opportunity (ranging markets)
+                mean_rev = human_analysis.get('mean_reversion')
+                if mean_rev and regime == MarketRegime.RANGING:
+                    if mean_rev.direction == 'long':
+                        long_enhanced += self.human_logic_weight * mean_rev.strength * 2.5
+                        logger.info(f"📉 HUMAN LOGIC: Mean reversion LONG (RSI={mean_rev.rsi_value:.0f}) +{self.human_logic_weight * mean_rev.strength * 2.5:.1f}")
+                    else:
+                        short_enhanced += self.human_logic_weight * mean_rev.strength * 2.5
+                        logger.info(f"📈 HUMAN LOGIC: Mean reversion SHORT (RSI={mean_rev.rsi_value:.0f}) +{self.human_logic_weight * mean_rev.strength * 2.5:.1f}")
+                
+                # CRITICAL: Anti-chase logic - PENALIZE chasing momentum
+                anti_chase = human_analysis.get('anti_chase', {})
+                if anti_chase.get('chasing_long'):
+                    # Penalize long signals when we're chasing green candles
+                    penalty = self.human_logic_weight * 2  # Heavy penalty
+                    long_enhanced -= penalty
+                    logger.warning(f"⚠️ ANTI-CHASE: {anti_chase['consecutive_green']} green candles - LONG penalty -{penalty:.1f}")
+                
+                if anti_chase.get('chasing_short'):
+                    # Penalize short signals when we're chasing red candles
+                    penalty = self.human_logic_weight * 2
+                    short_enhanced -= penalty
+                    logger.warning(f"⚠️ ANTI-CHASE: {anti_chase['consecutive_red']} red candles - SHORT penalty -{penalty:.1f}")
         
         # Track score history for stability analysis
         self._long_score_history.append(long_enhanced)
@@ -466,6 +546,35 @@ class SwingStrategy:
             regime_params=regime_params,
             session_params=session_params,
         )
+        
+        # ==================== SMART STOP PLACEMENT ====================
+        # Use human logic to place stops BEYOND liquidity zones
+        # This prevents getting stopped out by wicks/sweeps
+        if self.use_human_logic:
+            default_sl_pct = risk_levels.get('sl_pct', 2.0)
+            smart_stop = self.human_logic.get_smart_stop_placement(
+                direction=direction,
+                entry_price=current_price,
+                candles=candles,
+                default_sl_pct=default_sl_pct,
+            )
+            
+            # Use smart stop if it's within reasonable range (not too far)
+            original_stop = Decimal(str(risk_levels['stop_loss']))
+            if direction == 'long':
+                # For longs, smart stop should be lower (further from entry)
+                if smart_stop < original_stop:
+                    risk_levels['stop_loss'] = float(smart_stop)
+                    new_sl_pct = abs((current_price - smart_stop) / current_price * 100)
+                    risk_levels['sl_pct'] = float(new_sl_pct)
+                    logger.info(f"🛡️ SMART STOP: Moved SL from ${original_stop:.4f} to ${smart_stop:.4f} (beyond liquidity)")
+            else:
+                # For shorts, smart stop should be higher (further from entry)
+                if smart_stop > original_stop:
+                    risk_levels['stop_loss'] = float(smart_stop)
+                    new_sl_pct = abs((smart_stop - current_price) / current_price * 100)
+                    risk_levels['sl_pct'] = float(new_sl_pct)
+                    logger.info(f"🛡️ SMART STOP: Moved SL from ${original_stop:.4f} to ${smart_stop:.4f} (beyond liquidity)")
         
         # Apply session aggression to position size
         aggression = Decimal(str(session_params.get('aggression', 1.0)))

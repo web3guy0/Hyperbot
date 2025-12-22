@@ -840,6 +840,60 @@ class HyperAIBot:
                 if cloid and hasattr(self.order_manager, 'track_fill'):
                     self.order_manager.track_fill(cloid, single_fill)
                 
+                # CRITICAL FIX: Close trade in DB when fill has closedPnl (position closed)
+                # This ensures we capture the actual P&L from the exchange
+                if closed_pnl != 0 and coin in self._active_trade_ids:
+                    try:
+                        trade_info = self._active_trade_ids[coin]
+                        entry_price = float(trade_info.get('entry_price', 0))
+                        trade_size = float(trade_info.get('quantity', size))
+                        trade_side = trade_info.get('side', 'long')
+                        entry_time = trade_info.get('entry_time')
+                        
+                        # Calculate PnL percent
+                        if entry_price > 0 and trade_size > 0:
+                            pnl_percent = (closed_pnl / (trade_size * entry_price)) * 100
+                        else:
+                            pnl_percent = 0
+                        
+                        # Calculate duration
+                        duration_seconds = None
+                        if entry_time:
+                            duration_seconds = int((datetime.now(timezone.utc) - entry_time).total_seconds())
+                        
+                        # Close trade in database with ACTUAL P&L from exchange
+                        if self.db:
+                            try:
+                                loop = asyncio.get_running_loop()
+                                loop.create_task(self.db.close_trade(
+                                    trade_id=trade_info.get('trade_id'),
+                                    exit_price=price,
+                                    pnl=closed_pnl,
+                                    pnl_percent=pnl_percent,
+                                    commission=fee,
+                                    duration_seconds=duration_seconds
+                                ))
+                                logger.info(f"📊 DB: Trade closed via fill - {coin} P&L: ${closed_pnl:+.2f}")
+                            except Exception as db_err:
+                                logger.error(f"❌ Failed to close trade in DB from fill: {db_err}")
+                        
+                        # Record to Kelly Criterion
+                        if self.kelly:
+                            self.kelly.add_trade(
+                                pnl=closed_pnl,
+                                entry_price=entry_price,
+                                exit_price=price,
+                                size=trade_size,
+                                side=trade_side
+                            )
+                        
+                        # Clean up tracking
+                        del self._active_trade_ids[coin]
+                        self._save_active_trades()
+                        
+                    except Exception as e:
+                        logger.error(f"Error processing fill for DB: {e}")
+                
                 # Schedule Telegram notification for fills (handle no event loop gracefully)
                 if self.telegram_bot and closed_pnl:  # Only notify on closes with P&L
                     try:
@@ -1884,22 +1938,28 @@ class HyperAIBot:
             logger.error(f"Error logging trade: {e}")
     
     async def shutdown(self):
-        """Graceful shutdown"""
+        """Graceful shutdown - fast for PM2 (max 3 seconds)"""
         logger.info("🛑 Shutting down...")
         self.is_running = False
         
         try:
-            # Stop Telegram bot
+            # Stop Telegram bot with timeout
             if self.telegram_bot:
-                await self.telegram_bot.stop()
+                try:
+                    await asyncio.wait_for(self.telegram_bot.stop(), timeout=1.5)
+                except asyncio.TimeoutError:
+                    logger.warning("Telegram stop timed out")
             
-            # Stop websocket (sync method)
+            # Stop websocket (sync method - fast)
             if self.websocket:
                 self.websocket.stop()
             
-            # Close database connection
+            # Close database connection with timeout
             if self.db:
-                await self.db.disconnect()
+                try:
+                    await asyncio.wait_for(self.db.disconnect(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    logger.warning("DB disconnect timed out")
             
             # Log final statistics
             runtime = (datetime.now(timezone.utc) - self.start_time).total_seconds() if self.start_time else 0
@@ -1915,6 +1975,8 @@ class HyperAIBot:
         
         except Exception as e:
             logger.error(f"Error during shutdown: {e}")
+        finally:
+            logger.info("✅ Shutdown complete")
     
     def pause(self):
         """Pause trading (for emergency stop button)"""
