@@ -43,6 +43,8 @@ from app.strategies.adaptive.obv import OBVCalculator
 from app.strategies.adaptive.cmf import ChaikinMoneyFlow
 # NEW: Human-like trading intelligence (anti-chase, mean reversion, stop hunt detection)
 from app.strategies.adaptive.human_logic import HumanTradingLogic
+# NEW: Self-learning performance engine (auto-adjusts based on results)
+from app.strategies.adaptive.performance_engine import AdaptivePerformanceEngine, TradeResult
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +173,11 @@ class SwingStrategy:
         self.human_logic = HumanTradingLogic()
         self.use_human_logic = os.getenv('USE_HUMAN_LOGIC', 'true').lower() == 'true'
         self.human_logic_weight = float(os.getenv('HUMAN_LOGIC_WEIGHT', '2.0'))  # Score multiplier for human signals
+        
+        # NEW: Self-learning performance engine
+        # Auto-adjusts strategy based on recent performance
+        self.performance_engine = AdaptivePerformanceEngine()
+        self.use_performance_feedback = os.getenv('USE_PERFORMANCE_FEEDBACK', 'true').lower() == 'true'
         
         # State tracking - BE PATIENT, DON'T OVERTRADE
         self.last_signal_time: Optional[datetime] = None
@@ -409,6 +416,29 @@ class SwingStrategy:
         else:
             # Use base threshold for trending/volatile/unknown
             effective_threshold = self.min_signal_score
+        
+        # ==================== PERFORMANCE FEEDBACK LOOP ====================
+        # Auto-adjust threshold based on recent performance
+        if self.use_performance_feedback:
+            # Check if we should trade at all
+            should_trade, reason = self.performance_engine.should_trade()
+            if not should_trade:
+                logger.warning(f"🛑 PERFORMANCE ENGINE: {reason}")
+                return None
+            
+            # Apply threshold adjustment based on win rate
+            effective_threshold = self.performance_engine.get_adjusted_threshold(effective_threshold)
+            
+            # Check if we should avoid current conditions
+            session_name = session_params.get('session', 'unknown')
+            avoid, avoid_reason = self.performance_engine.should_avoid_condition(
+                symbol=self.symbol,
+                regime=regime.value,
+                session=session_name,
+            )
+            if avoid:
+                logger.warning(f"⚠️ AVOIDING: {avoid_reason}")
+                return None
         
         # OPTIMIZED LOGGING: Only log when scores change significantly or approaching threshold
         # This prevents log spam (was logging every 2 seconds!)
@@ -1359,6 +1389,44 @@ class SwingStrategy:
         
         elapsed = (datetime.now(timezone.utc) - self.last_signal_time).total_seconds()
         return elapsed >= self.signal_cooldown_seconds
+    
+    def record_trade_result(
+        self,
+        symbol: str,
+        direction: str,
+        entry_price: float,
+        exit_price: float,
+        pnl: float,
+        regime: str = 'unknown',
+        signal_score: int = 0,
+        session: str = 'unknown',
+        duration_minutes: int = 0,
+    ):
+        """
+        Record a completed trade for the performance engine.
+        
+        Call this when a trade is closed to enable the bot to learn.
+        """
+        if not self.use_performance_feedback:
+            return
+        
+        pnl_pct = ((exit_price - entry_price) / entry_price * 100) if direction == 'long' else ((entry_price - exit_price) / entry_price * 100)
+        
+        trade = TradeResult(
+            symbol=symbol,
+            direction=direction,
+            entry_price=entry_price,
+            exit_price=exit_price,
+            pnl=pnl,
+            pnl_pct=pnl_pct,
+            regime=regime,
+            signal_score=signal_score,
+            session=session,
+            timestamp=datetime.now(timezone.utc),
+            duration_minutes=duration_minutes,
+        )
+        
+        self.performance_engine.record_trade(trade)
     
     def invalidate_indicator_cache(self):
         """Invalidate cache when new candle arrives."""

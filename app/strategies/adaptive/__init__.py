@@ -27,6 +27,7 @@ from .stoch_rsi import StochRSICalculator, StochRSIResult
 from .obv import OBVCalculator, OBVResult
 from .cmf import ChaikinMoneyFlow, CMFResult
 from .human_logic import HumanTradingLogic, TrapType, TrapSignal, MeanReversionSignal
+from .performance_engine import AdaptivePerformanceEngine, TradeResult, MarketCondition, PerformanceStats
 
 __all__ = [
     # Market Analysis
@@ -62,4 +63,9 @@ __all__ = [
     'TrapType',
     'TrapSignal',
     'MeanReversionSignal',
+    # Performance Engine (Self-Learning)
+    'AdaptivePerformanceEngine',
+    'TradeResult',
+    'MarketCondition',
+    'PerformanceStats',
 ]
