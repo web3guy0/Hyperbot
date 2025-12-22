@@ -887,6 +887,11 @@ class HyperAIBot:
                                 side=trade_side
                             )
                         
+                        # ========== TILT PROTECTION: Track consecutive wins/losses ==========
+                        if self.risk_engine:
+                            won = closed_pnl > 0
+                            self.risk_engine.record_trade_result(won, Decimal(str(closed_pnl)))
+                        
                         # Clean up tracking
                         del self._active_trade_ids[coin]
                         self._save_active_trades()
@@ -1529,6 +1534,15 @@ class HyperAIBot:
                                     signal['size'] = float(Decimal(str(original_size)) * Decimal(str(size_ratio)))
                                     signal['position_size_pct'] = kelly_adjusted_pct
                                     logger.info(f"📊 Kelly adjusted size: {original_size:.4f} → {signal['size']:.4f} ({kelly_adjusted_pct:.1f}%)")
+                        
+                        # ========== TILT PROTECTION: Reduce size after consecutive losses ==========
+                        if self.risk_engine:
+                            tilt_adj = self.risk_engine.get_tilt_adjustments()
+                            if tilt_adj.get('is_tilted'):
+                                original_size = signal['size']
+                                signal['size'] = float(Decimal(str(original_size)) * Decimal(str(tilt_adj['size_multiplier'])))
+                                logger.warning(f"🧘 TILT PROTECTION: {tilt_adj['consecutive_losses']} consecutive losses")
+                                logger.warning(f"   Size reduced: {original_size:.4f} → {signal['size']:.4f} ({tilt_adj['size_multiplier']*100:.0f}%)")
                         
                         # Send Telegram notification for new signal
                         if self.telegram_bot:

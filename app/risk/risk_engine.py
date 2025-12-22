@@ -3,10 +3,11 @@ Risk Engine - Pre-trade and real-time risk validation
 Enterprise-grade risk management with multiple safety layers
 """
 
+import os
 import logging
 from typing import Dict, Any, Optional, Tuple
 from decimal import Decimal
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,15 @@ class RiskEngine:
         # Risk scoring
         self.current_risk_score = 0  # 0-100, higher = more risky
         
+        # ========== CONSECUTIVE LOSS PROTECTION (TILT GUARD) ==========
+        # After consecutive losses, reduce risk to prevent account blow-up
+        self.consecutive_losses = 0
+        self.consecutive_wins = 0
+        self.max_consecutive_losses = int(os.getenv('MAX_CONSECUTIVE_LOSSES', '3'))
+        self.tilt_cooldown_until: Optional[datetime] = None  # Pause trading until this time
+        self.tilt_size_reduction = Decimal('0.5')  # 50% size reduction after max losses
+        self.tilt_score_penalty = 2  # Require +2 signal score during tilt
+        
         logger.info("🛡️ Risk Engine initialized")
         logger.info(f"   Max Position Size: {self.limits.max_position_size_pct}%")
         logger.info(f"   Max Leverage: {self.limits.max_leverage}x")
@@ -104,6 +114,18 @@ class RiskEngine:
         
         # Reset counters if needed
         self._reset_counters()
+        
+        # ========== TILT PROTECTION CHECK ==========
+        # Block trading during cooldown period
+        if self.tilt_cooldown_until:
+            now = datetime.now(timezone.utc)
+            if now < self.tilt_cooldown_until:
+                remaining = (self.tilt_cooldown_until - now).total_seconds() / 60
+                return False, f"🧘 Tilt cooldown: {remaining:.0f} min remaining after {self.consecutive_losses} losses"
+            else:
+                # Cooldown expired, reset
+                logger.info(f"✅ Tilt cooldown expired - resuming trading (reduced size)")
+                self.tilt_cooldown_until = None
         
         # 1. Check position count limit
         if len(self.position_manager.open_positions) >= self.limits.max_positions:
@@ -174,6 +196,62 @@ class RiskEngine:
         self.daily_trades += 1
         self.hourly_trades += 1
         self.last_trade_time = datetime.now(timezone.utc)
+    
+    def record_trade_result(self, won: bool, pnl: Decimal = Decimal('0')):
+        """
+        Record trade outcome for consecutive loss tracking.
+        
+        TILT PROTECTION:
+        - After 3 consecutive losses: reduce position size 50%, require +2 signal score
+        - After 5 consecutive losses: pause trading for 1 hour
+        - Reset after 1 win
+        
+        Args:
+            won: True if trade was profitable
+            pnl: P&L amount (optional, for logging)
+        """
+        if won:
+            if self.consecutive_losses > 0:
+                logger.info(f"✅ Win breaks {self.consecutive_losses}-loss streak! Resetting tilt state.")
+            self.consecutive_losses = 0
+            self.consecutive_wins += 1
+            self.tilt_cooldown_until = None  # Clear any cooldown
+        else:
+            self.consecutive_wins = 0
+            self.consecutive_losses += 1
+            
+            if self.consecutive_losses >= 5:
+                # SEVERE TILT: Pause trading for 1 hour
+                self.tilt_cooldown_until = datetime.now(timezone.utc) + timedelta(hours=1)
+                logger.warning(f"🚨 TILT PROTECTION: {self.consecutive_losses} consecutive losses!")
+                logger.warning(f"   ⏸️ Trading PAUSED for 1 hour until {self.tilt_cooldown_until}")
+            elif self.consecutive_losses >= self.max_consecutive_losses:
+                # MODERATE TILT: Reduce size and require higher scores
+                logger.warning(f"⚠️ TILT WARNING: {self.consecutive_losses} consecutive losses")
+                logger.warning(f"   📉 Position size reduced to {self.tilt_size_reduction*100:.0f}%")
+                logger.warning(f"   📊 Signal score requirement +{self.tilt_score_penalty}")
+    
+    def get_tilt_adjustments(self) -> Dict[str, Any]:
+        """
+        Get current tilt-based adjustments for position sizing and signal requirements.
+        
+        Returns:
+            Dict with:
+            - size_multiplier: 1.0 normal, 0.5 during tilt
+            - score_penalty: 0 normal, +2 during tilt
+            - is_tilted: True if in tilt state
+            - consecutive_losses: Current loss streak
+        """
+        is_tilted = self.consecutive_losses >= self.max_consecutive_losses
+        
+        return {
+            'size_multiplier': float(self.tilt_size_reduction) if is_tilted else 1.0,
+            'score_penalty': self.tilt_score_penalty if is_tilted else 0,
+            'is_tilted': is_tilted,
+            'consecutive_losses': self.consecutive_losses,
+            'consecutive_wins': self.consecutive_wins,
+            'cooldown_until': self.tilt_cooldown_until.isoformat() if self.tilt_cooldown_until else None
+        }
     
     def _reset_counters(self):
         """Reset hourly and daily counters if needed"""

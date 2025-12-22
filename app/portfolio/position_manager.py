@@ -15,6 +15,7 @@ whether opened by the bot or manually by the user.
 import asyncio
 import json
 import logging
+import os
 from decimal import Decimal
 from typing import Dict, Any, Optional, List, Set, Tuple
 from datetime import datetime, timezone, timedelta
@@ -46,6 +47,7 @@ class ExitReason(Enum):
     MOMENTUM_LOST = "momentum_lost"
     BREAK_EVEN = "break_even"
     MANUAL = "manual"
+    STALE_POSITION = "stale_position"  # Position held too long without progress
 
 
 @dataclass
@@ -141,6 +143,12 @@ class PositionManager:
         # Health check thresholds
         self.health_check_interval = timedelta(seconds=30)
         self.max_health_failures = 3  # Exit after 3 consecutive failures
+        
+        # ========== TIME-BASED EXIT (CAPITAL EFFICIENCY) ==========
+        # Don't let positions sit forever - exit stale trades to free capital
+        self.time_exit_enabled = self.config.get('time_exit', True)
+        self.max_hold_hours = int(os.getenv('MAX_HOLD_HOURS', '24'))  # Max hours to hold if not in profit
+        self.weekend_exit_enabled = self.config.get('weekend_exit', True)  # Exit before weekend low liquidity
         
         # Trailing stop settings
         self.trailing_activation_pct = Decimal(str(self.config.get('trailing_activation_pct', 1.5)))
@@ -295,6 +303,12 @@ class PositionManager:
             # 4. Health check (can we stay in this trade?)
             if self.health_check_enabled and candles:
                 exit_reason = await self._check_position_health(position, candles)
+                if exit_reason:
+                    return exit_reason
+            
+            # 5. Time-based exit (don't hold stale positions forever)
+            if self.time_exit_enabled:
+                exit_reason = await self._check_time_based_exit(position)
                 if exit_reason:
                     return exit_reason
             
@@ -602,6 +616,62 @@ class PositionManager:
             
         except Exception as e:
             logger.error(f"Error in health check: {e}")
+            return None
+    
+    async def _check_time_based_exit(self, position: ManagedPosition) -> Optional[ExitReason]:
+        """
+        Check if position should be closed due to time limits.
+        
+        Time-based exit rules:
+        1. Position held > MAX_HOLD_HOURS and not in profit → EXIT
+        2. Friday 20:00 UTC (before weekend low liquidity) → WARN/EXIT
+        
+        This prevents capital being locked in stale positions.
+        Small accounts can't afford to have capital tied up.
+        
+        Returns:
+            ExitReason.STALE_POSITION if should exit, None otherwise
+        """
+        try:
+            now = datetime.now(timezone.utc)
+            position_age = now - position.entry_time
+            hours_held = position_age.total_seconds() / 3600
+            
+            # Get current P&L percentage
+            pnl_pct = position.unrealized_pnl_pct
+            
+            # Rule 1: Max hold time exceeded for non-profitable positions
+            if hours_held >= self.max_hold_hours:
+                if pnl_pct <= 0:
+                    logger.warning(f"⏰ STALE POSITION: {position.symbol} held {hours_held:.1f}h with {pnl_pct:.2f}% P&L")
+                    logger.warning(f"   Entry: ${position.entry_price:.4f} at {position.entry_time}")
+                    logger.warning(f"   Exiting to free capital for better opportunities")
+                    return ExitReason.STALE_POSITION
+                elif pnl_pct > 0 and pnl_pct < 1.0:
+                    # In profit but tiny - extend by 50% but warn
+                    extended_limit = self.max_hold_hours * 1.5
+                    if hours_held >= extended_limit:
+                        logger.warning(f"⏰ STALE POSITION: {position.symbol} held {hours_held:.1f}h with only {pnl_pct:.2f}% profit")
+                        logger.warning(f"   Exceeded extended limit of {extended_limit:.0f}h - exiting")
+                        return ExitReason.STALE_POSITION
+                    else:
+                        logger.info(f"⏳ {position.symbol} in small profit ({pnl_pct:.2f}%), extending hold time")
+            
+            # Rule 2: Weekend risk (Friday after 20:00 UTC)
+            if self.weekend_exit_enabled:
+                # Check if it's Friday after 20:00 UTC
+                if now.weekday() == 4 and now.hour >= 20:  # Friday = 4
+                    if pnl_pct <= 0:
+                        logger.warning(f"📅 WEEKEND EXIT: {position.symbol} closing before weekend (P&L: {pnl_pct:.2f}%)")
+                        logger.warning(f"   Avoiding low liquidity weekend risk")
+                        return ExitReason.STALE_POSITION
+                    else:
+                        logger.info(f"📅 Weekend approaching but {position.symbol} is in profit ({pnl_pct:.2f}%) - holding")
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error in time-based exit check: {e}")
             return None
     
     async def _evaluate_setup_health(self, position: ManagedPosition, candles: List[Dict]) -> PositionHealth:
