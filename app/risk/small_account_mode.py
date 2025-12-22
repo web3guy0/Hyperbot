@@ -72,37 +72,51 @@ class SmallAccountMode:
             self.tier = 'micro'
             self.recommended_leverage = 10  # High enough to meet minimums, not crazy
             self.max_positions = 1
-            self.min_signal_score = 10  # Lowered from 18 - was too restrictive
-            self.target_pct = Decimal('2.5')  # Realistic targets
-            self.stop_pct = Decimal('1.0')  # Tight but not too tight
+            self.min_signal_score = 10  # Only take A+ setups
+            # AGGRESSIVE TARGETS for micro accounts:
+            # With 10x leverage, need bigger % moves to make meaningful profit
+            # $22 × 70% × 10x = $154 notional
+            # 3.5% TP = $5.39 profit per win (was $0.47 with conservative settings)
+            self.target_pct = Decimal('3.5')  # Bigger targets - let winners RUN
+            self.stop_pct = Decimal('1.2')    # Slightly wider SL to avoid noise
+            self.position_size_pct = 70       # Use more capital - only 1 trade anyway!
         elif account_balance < 100:
             self.tier = 'small'
-            self.recommended_leverage = 7
+            self.recommended_leverage = 10    # Keep 10x for small too
             self.max_positions = 1
-            self.min_signal_score = 9  # Lowered from 16
-            self.target_pct = Decimal('2.0')
-            self.stop_pct = Decimal('0.8')
+            self.min_signal_score = 9
+            self.target_pct = Decimal('3.0')  # Bigger targets
+            self.stop_pct = Decimal('1.0')
+            self.position_size_pct = 65
         elif account_balance < 500:
             self.tier = 'starter'
-            self.recommended_leverage = 5
+            self.recommended_leverage = 7
             self.max_positions = 2
-            self.min_signal_score = 8  # Lowered from 15
-            self.target_pct = Decimal('2.0')
+            self.min_signal_score = 8
+            self.target_pct = Decimal('2.5')
             self.stop_pct = Decimal('0.8')
+            self.position_size_pct = 50
         else:
             self.tier = 'normal'
             self.recommended_leverage = 5
             self.max_positions = 3
-            self.min_signal_score = 7  # Lowered from 12 - more trades for testing
+            self.min_signal_score = 7
             self.target_pct = Decimal('2.0')
             self.stop_pct = Decimal('0.8')
+            self.position_size_pct = 40
         
         logger.info(f"💰 Small Account Mode: {self.tier.upper()}")
         logger.info(f"   Balance: ${account_balance:.2f}")
         logger.info(f"   Leverage: {self.recommended_leverage}x")
+        logger.info(f"   Position Size: {self.position_size_pct}%")
         logger.info(f"   Max Positions: {self.max_positions}")
         logger.info(f"   Min Signal Score: {self.min_signal_score}/25")
         logger.info(f"   Target: {self.target_pct}% | Stop: {self.stop_pct}%")
+        
+        # Calculate expected profit per winning trade
+        expected_notional = float(self.balance) * (self.position_size_pct / 100) * self.recommended_leverage
+        expected_profit = expected_notional * (float(self.target_pct) / 100)
+        logger.info(f"   💵 Expected profit per win: ${expected_profit:.2f}")
     
     def get_tradeable_assets(self) -> List[str]:
         """Get list of assets suitable for this account size."""
@@ -207,7 +221,8 @@ class SmallAccountMode:
             'SWING_TARGET_PCT': str(self.target_pct),
             'SWING_STOP_PCT': str(self.stop_pct),
             'SWING_COOLDOWN': '600',  # 10 min cooldown - be patient
-            'POSITION_SIZE_PCT': '50',  # Conservative position size
+            'POSITION_SIZE_PCT': str(self.position_size_pct),  # Aggressive for small accounts
+            'MAX_POSITION_SIZE_PCT': str(min(self.position_size_pct + 10, 80)),  # Allow slightly more
         }
     
     def apply_config(self):
