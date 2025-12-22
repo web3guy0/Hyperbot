@@ -605,6 +605,13 @@ class PositionManager:
                 position.health_checks_failed += 1
                 logger.warning(f"⚠️ {position.symbol} health check failed ({position.health_checks_failed}/{self.max_health_failures})")
                 
+                # AGGRESSIVE: For small accounts, exit on FIRST critical failure if losing money
+                # Don't wait for 3 checks - that's too late!
+                if position.unrealized_pnl_pct < -0.5:  # Already losing > 0.5%
+                    logger.warning(f"🚨 {position.symbol} IMMEDIATE EXIT - losing {position.unrealized_pnl_pct:.2f}% with failed setup")
+                    return ExitReason.SETUP_FAILED
+                
+                # Only wait for multiple failures if not losing much yet
                 if position.health_checks_failed >= self.max_health_failures:
                     logger.warning(f"🚨 {position.symbol} setup failed - early exit triggered")
                     return ExitReason.SETUP_FAILED
