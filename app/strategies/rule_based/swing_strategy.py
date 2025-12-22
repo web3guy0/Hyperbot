@@ -305,8 +305,8 @@ class SwingStrategy:
         # Ranging = price oscillates, stops out both longs AND shorts
         if regime == MarketRegime.RANGING:
             # Check confidence - only block if clearly ranging
-            if hasattr(regime_result, 'confidence') and regime_result.confidence > 0.6:
-                logger.info(f"⏸️ RANGING MARKET ({regime_result.confidence:.0%} confidence) - NO TRADING")
+            if regime_confidence and regime_confidence > 0.6:
+                logger.info(f"⏸️ RANGING MARKET ({regime_confidence:.0%} confidence) - NO TRADING")
                 logger.info(f"   Small accounts get chopped up in ranges. Waiting for trend...")
                 return None
             # Low confidence ranging - might be transitioning, allow with caution
