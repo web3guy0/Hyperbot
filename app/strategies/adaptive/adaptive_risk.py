@@ -57,11 +57,12 @@ class AdaptiveRiskManager:
         self.atr_sl_multiplier = Decimal(os.getenv('ATR_SL_MULTIPLIER', '1.2'))
         self.atr_tp_multiplier = Decimal(os.getenv('ATR_TP_MULTIPLIER', '4.5'))
         
-        # Minimum/Maximum bounds - REAL MONEY TARGETS
+        # Minimum/Maximum bounds - CRITICAL FOR SMALL ACCOUNTS
+        # With 10x leverage: 1.2% SL = 12% account loss MAX
         self.min_sl_pct = Decimal('0.3')   # Minimum 0.3% SL (tight but safe)
-        self.max_sl_pct = Decimal('2.0')   # Maximum 2% SL (10% account loss with 5x)
-        self.min_tp_pct = Decimal('0.8')   # Minimum 0.8% TP (4% account gain with 5x)
-        self.max_tp_pct = Decimal('6.0')   # Maximum 6% TP (30% account gain with 5x)
+        self.max_sl_pct = Decimal('1.2')   # HARD CAP: 1.2% SL max (12% loss with 10x)
+        self.min_tp_pct = Decimal('0.8')   # Minimum 0.8% TP
+        self.max_tp_pct = Decimal('5.0')   # Maximum 5% TP (50% gain with 10x)
         
         # Risk reduction after losses
         self.consecutive_loss_count = 0
