@@ -300,6 +300,25 @@ class SwingStrategy:
             logger.debug(f"⏸️ Regime UNKNOWN for {self.symbol} - skipping signal generation")
             return None
         
+        # ========== CRITICAL FIX: BLOCK TRADING IN RANGING MARKETS ==========
+        # Small accounts get DESTROYED by chop. Only trade trends!
+        # Ranging = price oscillates, stops out both longs AND shorts
+        if regime == MarketRegime.RANGING:
+            # Check confidence - only block if clearly ranging
+            if hasattr(regime_result, 'confidence') and regime_result.confidence > 0.6:
+                logger.info(f"⏸️ RANGING MARKET ({regime_result.confidence:.0%} confidence) - NO TRADING")
+                logger.info(f"   Small accounts get chopped up in ranges. Waiting for trend...")
+                return None
+            # Low confidence ranging - might be transitioning, allow with caution
+            logger.info(f"⚠️ Possible ranging market - proceeding with extra caution")
+        
+        # ========== ADX FILTER: No trend = No trade ==========
+        adx = indicators.get('adx')
+        if adx is not None and adx < self.adx_weak:  # ADX < 20
+            logger.info(f"⏸️ ADX too low ({adx:.1f} < {self.adx_weak}) - NO TREND, NO TRADE")
+            logger.info(f"   Waiting for trend strength to develop...")
+            return None
+        
         # 3. Smart Money Concepts analysis
         smc_analysis = self.smc_analyzer.analyze(candles)
         
