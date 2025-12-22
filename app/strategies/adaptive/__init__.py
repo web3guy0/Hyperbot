@@ -62,9 +62,4 @@ __all__ = [
     'TrapType',
     'TrapSignal',
     'MeanReversionSignal',
-    # Performance Engine (Self-Learning)
-    'AdaptivePerformanceEngine',
-    'TradeResult',
-    'MarketCondition',
-    'PerformanceStats',
 ]

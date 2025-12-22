@@ -6,7 +6,6 @@ Coordinates trading strategies - SWING ONLY for sustainable profits
 import os
 import logging
 from typing import Dict, Any, Optional, List
-from datetime import datetime, timezone
 import asyncio
 
 # Import strategies - SWING ONLY (scalping removed - fees kill profits)

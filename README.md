@@ -1,22 +1,111 @@
 # 🤖 HyperBot - Automated Trading Bot for HyperLiquid DEX
 
-[![Production Ready](https://img.shields.io/badge/status-production%20ready-success)](https://github.com/web3firm/hyperbot)
+[![Production Ready](https://img.shields.io/badge/status-production%20ready-success)](https://github.com/web3guy0/hyperbot)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-**Enterprise-grade automated trading bot** combining rule-based strategies with machine learning for cryptocurrency futures trading on HyperLiquid DEX.
+**Enterprise-grade automated trading bot** combining rule-based strategies with adaptive risk management for cryptocurrency futures trading on HyperLiquid DEX.
 
-## 🆕 Version 4.0 - Pro Trading Features
+## 🆕 Version 5.0 - Institutional Trading Features
 
-**Major upgrade with professional trading enhancements:**
+**Major upgrade with institutional-grade enhancements:**
+- **Human-Like Trading Intelligence** - Anti-chase, mean reversion, stop hunt detection
 - **Multi-Timeframe Confirmation** - Mandatory 15m/1h/4h alignment before entries
-- **Smart Money Concepts** - FVG, Order Blocks, Liquidity Sweeps
-- **Pro Trading Filters** - Volatility regime, BTC correlation, momentum confirmation
-- **Small Account Mode** - Optimized for $20-$100 accounts
-- **Paper Trading Mode** - Validate strategies without real money
+- **Smart Money Concepts** - FVG, Order Blocks, Liquidity Sweeps, Break of Structure
+- **Adaptive Risk Management** - ATR-based dynamic TP/SL with regime adjustment
 - **Kelly Criterion Sizing** - Optimal position sizing based on win rate
 - **Multi-Asset Trading** - Trade SOL, ETH, BTC simultaneously
-- **Backtesting Framework** - Test strategies on historical data
+- **Paper Trading Mode** - Validate strategies without real money
+- **Small Account Mode** - Optimized for $20-$100 accounts
+
+---
+
+## 📁 Project Structure
+
+```
+Hyperbot/
+├── app/
+│   ├── bot.py                    # Main bot orchestrator
+│   ├── config.py                 # Configuration management
+│   ├── backtesting/
+│   │   └── backtester.py         # Historical backtesting engine
+│   ├── database/
+│   │   ├── db_manager.py         # PostgreSQL database manager
+│   │   ├── analytics.py          # Performance analytics dashboard
+│   │   └── schema.sql            # Database schema
+│   ├── execution/
+│   │   └── paper_trading.py      # Paper trading simulator
+│   ├── hl/
+│   │   ├── hl_client.py          # HyperLiquid API client
+│   │   ├── hl_order_manager.py   # Order execution & management
+│   │   └── hl_websocket.py       # Real-time WebSocket feeds
+│   ├── portfolio/
+│   │   ├── multi_asset_manager.py # Multi-asset orchestration
+│   │   └── position_manager.py    # Position tracking
+│   ├── risk/
+│   │   ├── drawdown_monitor.py   # Drawdown tracking
+│   │   ├── kelly_criterion.py    # Optimal position sizing
+│   │   ├── kill_switch.py        # Emergency stop logic
+│   │   ├── risk_engine.py        # Core risk management
+│   │   └── small_account_mode.py # Small account optimizations
+│   ├── strategies/
+│   │   ├── strategy_manager.py   # Strategy orchestration
+│   │   ├── adaptive/             # Adaptive strategy components
+│   │   │   ├── adaptive_risk.py      # Dynamic TP/SL calculator
+│   │   │   ├── cmf.py                # Chaikin Money Flow
+│   │   │   ├── divergence.py         # RSI/MACD divergence
+│   │   │   ├── donchian.py           # Donchian channels
+│   │   │   ├── funding_rate.py       # Funding rate filter
+│   │   │   ├── human_logic.py        # 🆕 Human-like trading logic
+│   │   │   ├── market_regime.py      # Regime detection
+│   │   │   ├── multi_asset_correlation.py # BTC correlation
+│   │   │   ├── multi_timeframe.py    # MTF analysis
+│   │   │   ├── obv.py                # On-Balance Volume
+│   │   │   ├── order_flow.py         # Order flow analysis
+│   │   │   ├── pro_filters.py        # Professional filters
+│   │   │   ├── session_manager.py    # Trading session detection
+│   │   │   ├── smart_money.py        # SMC concepts
+│   │   │   ├── stoch_rsi.py          # Stochastic RSI
+│   │   │   ├── supertrend.py         # Supertrend indicator
+│   │   │   └── vwap.py               # VWAP calculator
+│   │   └── rule_based/
+│   │       └── swing_strategy.py # Main swing trading strategy
+│   ├── tg_bot/
+│   │   ├── bot.py                # Telegram bot
+│   │   ├── formatters.py         # Message formatting
+│   │   └── keyboards.py          # Interactive buttons
+│   └── utils/
+│       ├── error_handler.py      # Error handling
+│       ├── indicator_calculator.py # Technical indicators
+│       ├── position_calculator.py # Position calculations
+│       ├── symbol_manager.py     # Symbol management
+│       └── trading_logger.py     # Logging utilities
+├── ml/
+│   ├── auto_trainer.py           # ML auto-retraining (future)
+│   ├── training/
+│   │   ├── dataset_builder.py    # Training data preparation
+│   │   ├── feature_engineering.py # Feature engineering
+│   │   └── model_trainer.py      # Model training
+│   ├── evaluation/               # Model evaluation (placeholder)
+│   ├── inference/                # Model inference (placeholder)
+│   └── models/saved/             # Saved models
+├── scripts/
+│   └── backfill_trades.py        # Database backfill utility
+├── data/
+│   ├── bot_positions.json        # Position state persistence
+│   └── trades/                   # Trade logs (JSONL)
+├── logs/                         # Application logs
+├── debug_bot.py                  # Component testing utility
+├── debug_signals.py              # Signal debugging utility
+├── diagnose_score.py             # Score breakdown analyzer
+├── quick_signal_test.py          # Quick signal tester
+├── test_live_signals.py          # Live signal tester
+├── ecosystem.config.js           # PM2 process manager config
+├── hyperbot.service              # Systemd service file
+├── requirements.txt              # Python dependencies
+├── .env.example                  # Environment template
+└── README.md                     # This file
+```
 
 ---
 
@@ -24,7 +113,7 @@
 
 ### **1. Clone & Install**
 ```bash
-git clone https://github.com/web3firm/hyperbot.git
+git clone https://github.com/web3guy0/hyperbot.git
 cd hyperbot
 python3 -m venv .venv
 source .venv/bin/activate
@@ -40,14 +129,18 @@ cp .env.example .env
 nano .env
 ```
 
-Required settings:
+**Required settings (5 minimum):**
 ```env
-ACCOUNT_ADDRESS=0x...        # Your trading wallet address
-API_SECRET=0x...             # API wallet private key
-SYMBOL=SOL                   # Trading pair (BTC, ETH, SOL, etc.)
-MAX_LEVERAGE=5               # Leverage (1-50x)
-TELEGRAM_BOT_TOKEN=...       # From @BotFather
-TELEGRAM_CHAT_ID=...         # Your Telegram chat ID
+# HyperLiquid API (REQUIRED)
+API_SECRET=0x...              # Your wallet private key
+ACCOUNT_ADDRESS=0x...         # Your wallet address
+
+# Database (REQUIRED)
+DATABASE_URL=postgresql://... # PostgreSQL connection string
+
+# Telegram (REQUIRED for notifications)
+TELEGRAM_BOT_TOKEN=...        # From @BotFather
+TELEGRAM_CHAT_ID=...          # Your chat ID
 ```
 
 ### **3. Start Trading**
@@ -65,6 +158,55 @@ pm2 logs hyperbot
 
 ---
 
+## 🧠 Human-Like Trading Intelligence
+
+### **The Problem: Why Bots Lose Money**
+Most trading bots make the same mistakes retail traders make:
+1. **Chasing momentum** - Buying after 3+ green candles (too late!)
+2. **Getting stopped out** - SL placed at obvious levels (stop hunts)
+3. **Fighting the trend** - Mean reverting in trending markets
+
+### **Our Solution: HumanTradingLogic Module**
+
+```
+HUMAN-LIKE TRADING INTELLIGENCE
+═══════════════════════════════════════════════════════════════
+
+1. Anti-Chase Logic
+├─ Detects "chasing" (3+ consecutive same-color candles)
+├─ PENALIZES signals that follow momentum
+├─ REWARDS counter-momentum entries
+└─ Result: Enter BEFORE the crowd, not after
+
+2. Mean Reversion Detection
+├─ RSI extremes (<25 or >75)
+├─ Extended moves (>2% from VWAP)
+├─ Bollinger Band touches
+└─ Result: Catch reversals at key levels
+
+3. Liquidity Sweep Detection
+├─ Identifies stop hunt patterns
+├─ Detects "sweep + reversal" setups
+├─ Confirms with volume surge
+└─ Result: Trade WITH smart money, not against
+
+4. Smart Stop Placement
+├─ Places SL BEYOND obvious liquidity pools
+├─ Uses ATR + SMC for dynamic levels
+├─ Avoids round numbers where stops cluster
+└─ Result: Fewer stops hit by wicks
+
+═══════════════════════════════════════════════════════════════
+```
+
+**Configuration:**
+```env
+USE_HUMAN_LOGIC=true          # Enable human-like logic
+HUMAN_LOGIC_WEIGHT=2.0        # Weight for human signals (1.0-3.0)
+```
+
+---
+
 ## 🎯 How SL/TP is Calculated (Pro Trader Style)
 
 ### **The Problem with Fixed Percentages**
@@ -73,62 +215,43 @@ Amateur bots use fixed SL/TP like "stop at -1%, profit at +2%". This FAILS becau
 - No consideration of market structure
 - Stops get hit by normal price noise
 
-### **Our Pro Approach: ATR + Liquidity + SMC**
+### **Our Pro Approach: ATR + SMC + Regime**
 
 ```
 SL/TP CALCULATION LAYERS
 ═══════════════════════════════════════════════════════════════
 
 Layer 1: ATR-Based Dynamic Levels
-├─ Stop Loss = Entry ± (ATR × 1.5)
-├─ Take Profit = Entry ± (ATR × 4.0)
+├─ Stop Loss = Entry ± (ATR × 1.2-1.5)
+├─ Take Profit = Entry ± (ATR × 4.0-4.5)
 └─ Result: Levels adapt to current volatility
 
    Example (SOL at $200, ATR = $3):
-   • SL Distance = $3 × 1.5 = $4.50 (2.25%)
-   • TP Distance = $3 × 4.0 = $12.00 (6%)
-   • R:R Ratio = 2.67:1
+   • SL Distance = $3 × 1.2 = $3.60 (1.8%)
+   • TP Distance = $3 × 4.5 = $13.50 (6.75%)
+   • R:R Ratio = 3.75:1
 
-Layer 2: Smart Money Concepts (SMC)
+Layer 2: Market Regime Adjustment
+├─ TRENDING: TP×2.5, SL×0.8 (ride the trend)
+├─ RANGING: TP×1.2, SL×0.8 (quick scalps)
+├─ VOLATILE: TP×3.0, SL×1.5 (wider everything)
+├─ BREAKOUT: TP×4.0, SL×0.5 (big move potential)
+└─ Result: Adapts to market conditions
+
+Layer 3: Smart Money Concepts (SMC)
 ├─ Fair Value Gaps (FVG) - Unmitigated price imbalances
 ├─ Order Blocks - Where institutions accumulated
 ├─ Liquidity Levels - Where stop losses cluster
 └─ Result: TP/SL placed at institutional levels
 
-   Example:
-   • Long entry at $200
-   • Bullish FVG at $195 → Move SL below FVG ($194)
-   • Bearish Order Block at $215 → Set TP just before ($214)
-   
-Layer 3: Market Regime Adjustment
-├─ TRENDING: Wider TP (follow the trend)
-├─ RANGING: Tighter TP (quick exits)
-├─ VOLATILE: Wider SL (avoid noise stops)
-└─ Result: Adapts to market conditions
-
 Layer 4: Liquidity Targeting
 ├─ Identify where stops cluster (swing highs/lows)
-├─ Set TP before liquidity pools (institutions target these)
-├─ Set SL beyond liquidity sweeps (avoid stop hunts)
-└─ Result: Exit before reversals, avoid being the liquidity
+├─ Set TP before liquidity pools
+├─ Set SL beyond liquidity sweeps
+└─ Result: Exit before reversals, avoid stop hunts
 
-═══════════════════════════════════════════════════════════════
-FINAL FORMULA:
-
-  SL = max(ATR_SL, SMC_Level, Liquidity_Sweep_Zone)
-  TP = min(ATR_TP, Order_Block, Next_Liquidity_Pool)
-  
-  Enforced: R:R ≥ 2.5:1 (you can lose 2, win 1, still profit)
 ═══════════════════════════════════════════════════════════════
 ```
-
-### **Why This Works**
-| Method | Win Rate | R:R | Edge |
-|--------|----------|-----|------|
-| Fixed % SL/TP | ~45% | 2:1 | Negative |
-| ATR-Only | ~55% | 2.5:1 | Slight edge |
-| ATR + SMC | ~65% | 3:1 | Good edge |
-| **ATR + SMC + Liquidity** | **~70%** | **3:1** | **Strong edge** |
 
 ---
 
@@ -170,55 +293,64 @@ ENTRY CONFIRMATION FLOW
 └─ EXECUTE only if all TFs align!
 
 ═══════════════════════════════════════════════════════════════
-SIGNAL REJECTED IF:
-• 4H trending down, trying to go long
-• 1H overbought for longs
-• 15M momentum against direction
-• No confluence across timeframes
-═══════════════════════════════════════════════════════════════
 ```
 
 ---
 
-## 📊 Trading Strategies
+## 📊 Signal Scoring System
 
-### **Active Strategies (Enterprise Mode)**
+The bot uses a comprehensive 10-point scoring system:
 
-| Strategy | Target Win Rate | R:R Ratio | Description |
-|----------|----------------|-----------|-------------|
-| **Swing Trading** | 70% | 3:1 | ATR-based TP/SL + SMC + MTF confirmation |
-| **Scalping** | 65% | 2:1 | Momentum + trend alignment, 60s cooldown |
+| Component | Max Points | What It Measures |
+|-----------|------------|------------------|
+| Technical Indicators | 4 | RSI, MACD, EMA, Bollinger |
+| SMC Alignment | 2 | FVG, Order Blocks, Liquidity |
+| HTF Alignment | 2 | 15m/1h/4h trend agreement |
+| Order Flow | 2 | Volume delta, aggressive buying/selling |
 
-### **Strategy Filters (Quality over Quantity)**
-- ✅ **Multi-Timeframe** - 15m/1h/4h alignment required
-- ✅ **Pro Trading Filters** - Volatility regime, BTC correlation
-- ✅ **Smart Money Concepts** - FVG, Order Blocks, Liquidity
-- ✅ **Signal Score ≥ 7/10** - Multi-indicator confirmation
-- ✅ **Volume Confirmation** - Above average volume required
-- ✅ **Session Awareness** - Optimal trading hours only
+**Entry Threshold: 7/10 minimum** (configurable via `MIN_SIGNAL_SCORE`)
 
-### **Pro Trading Filters**
+**Score Adjustments:**
+- Human Logic can add +2 or -2 based on market context
+- Ranging markets get -2 threshold reduction
+- High volatility adds +1 threshold increase
+
+---
+
+## 🛡️ Risk Management Architecture
+
+### **Multi-Layer Protection**
+
 ```
-Filter 1: Volatility Regime
-├─ QUIET: Low volatility, tighter targets
-├─ NORMAL: Standard parameters
-├─ VOLATILE: Wider SL, careful entries
-└─ EXTREME: No trading (wait for calm)
+RISK MANAGEMENT STACK
+═══════════════════════════════════════════════════════════════
 
-Filter 2: BTC Correlation (Altcoins)
-├─ Check if altcoin move aligns with BTC
-├─ Reject longs if BTC dumping
-└─ Fade only on divergence setups
+1. Kelly Criterion (Position Sizing)
+   ├─ Calculates optimal bet size: f* = (p×b - q) / b
+   ├─ Uses Half-Kelly for safety (0.5× recommended)
+   ├─ Tracks last 20 trades for win rate
+   └─ Adapts position size to performance
 
-Filter 3: Momentum Confirmation
-├─ MACD histogram direction
-├─ RSI momentum (not just levels)
-└─ Multiple TF momentum alignment
+2. Adaptive Risk Manager (TP/SL)
+   ├─ ATR-based dynamic levels
+   ├─ Regime-adjusted multipliers
+   ├─ 20-trade rolling performance tracking
+   ├─ Reduces risk after consecutive losses
+   └─ Session-aware adjustments
 
-Filter 4: Volume Validation
-├─ Volume > 1.5x average
-├─ Climax volume detection
-└─ Exhaustion warnings
+3. Kill Switch (Emergency Stop)
+   ├─ Daily loss limit: -5% (configurable)
+   ├─ Max drawdown: -10% from peak
+   ├─ Single position loss: -8%
+   └─ Auto-pause trading when triggered
+
+4. Drawdown Monitor
+   ├─ Tracks peak equity
+   ├─ Calculates current drawdown
+   ├─ Alerts at warning thresholds
+   └─ Forces stop at max drawdown
+
+═══════════════════════════════════════════════════════════════
 ```
 
 ---
@@ -227,80 +359,32 @@ Filter 4: Volume Validation
 
 Automatically activated for accounts under $100:
 
+```env
+SMALL_ACCOUNT_MODE=auto       # auto, true, or false
+SMALL_ACCOUNT_THRESHOLD=100   # Threshold in USD
 ```
-SMALL ACCOUNT OPTIMIZATIONS
-═══════════════════════════════════════════════════════════════
 
-Capital Efficiency:
-├─ Leverage: 10x (vs 5x default)
-├─ Position Size: 80% of balance
-├─ Result: $30 account = $240 buying power
-
-Best Assets for Small Accounts:
-├─ 1. SOL - Low fees, high liquidity
-├─ 2. ETH - Tight spreads
-└─ 3. BTC - Most liquid
-
-Minimum Order Detection:
-├─ Checks exchange minimums before order
-├─ Warns if position too small
-└─ Suggests optimal size
-
-Risk Adjustments:
-├─ Tighter SL (preserve capital)
-├─ Slightly wider TP (maximize wins)
-└─ Fewer concurrent positions
-
-═══════════════════════════════════════════════════════════════
-```
+**Optimizations:**
+- Leverage: 10x (vs 5x default)
+- Position Size: 80% of balance
+- Tighter SL to preserve capital
+- Best assets: SOL, ETH (lower fees)
 
 ---
 
 ## 📝 Paper Trading Mode
 
-Validate strategies without risking real money:
+Test strategies without risking real money:
 
 ```bash
-# Enable paper trading
 PAPER_TRADING=true PAPER_TRADING_BALANCE=1000 python -m app.bot
 ```
 
 Features:
 - Full strategy execution (simulated)
 - Track virtual P&L
-- Performance metrics (win rate, Sharpe, etc.)
-- No real orders sent to exchange
-- Perfect for strategy validation
-
----
-
-## 🛡️ Risk Management
-
-### **Multi-Layer Protection**
-```
-Kill Switch
-├─ Daily Loss: -5% → Stop trading
-├─ Drawdown: -10% from peak → Pause
-├─ Position Loss: -8% single position → Close
-└─ Error Rate: >50% failed trades → Halt
-
-Position Sizing (Kelly Criterion)
-├─ Optimal size = (Win% × R:R - Loss%) / R:R
-├─ Half-Kelly for safety
-├─ Adapts to recent performance
-└─ Example: 65% WR, 3:1 R:R → 38% Kelly → 19% actual
-
-Position Limits
-├─ Max Positions: 3 concurrent
-├─ Max Leverage: 5x (10x small accounts)
-├─ Margin Usage: <80%
-└─ Per-Asset Cooldown: 5 minutes
-
-Dynamic Trailing
-├─ At 7% PnL: Move SL to breakeven + 2.5%
-├─ At 10% PnL: Aggressive trailing
-└─ At 12% PnL: Lock in 10%+ profit
-```
+- Performance metrics
+- No real orders sent
 
 ---
 
@@ -310,11 +394,12 @@ Dynamic Trailing
 |---------|-------------|
 | `/status` | Bot status, account balance, uptime |
 | `/positions` | Active positions with live P&L |
-| `/trades` | Last 10 completed trades |
+| `/trades` | Recent completed trades |
 | `/pnl` | Daily and weekly P&L |
 | `/stats` | Strategy performance stats |
 | `/analytics` | Full performance dashboard |
-| `/assets` | Multi-asset status (if enabled) |
+| `/kelly` | Kelly criterion sizing info |
+| `/assets` | Multi-asset status |
 | `/backtest` | Run strategy backtest |
 | `/logs` | Recent bot logs |
 | `/help` | All available commands |
@@ -322,43 +407,98 @@ Dynamic Trailing
 **Control Buttons:**
 - 🚀 **START** - Resume trading
 - 🛑 **STOP** - Pause trading
-- ❌ **CLOSE ALL** - Emergency close all positions
+- ❌ **CLOSE ALL** - Emergency close
 
 ---
 
 ## 🔧 Configuration Reference
 
-### **Core Settings**
+### **Essential Settings (5 Required)**
 ```env
-# Trading
-SYMBOL=SOL                    # Primary symbol
-TIMEFRAME=1m                  # Entry timeframe (1m, 5m, 15m, 1h, 4h)
+# API (REQUIRED)
+API_SECRET=0x...
+ACCOUNT_ADDRESS=0x...
+
+# Database (REQUIRED)
+DATABASE_URL=postgresql://...
+
+# Telegram (REQUIRED)
+TELEGRAM_BOT_TOKEN=...
+TELEGRAM_CHAT_ID=...
+```
+
+### **Trading Settings**
+```env
+SYMBOL=BTC                    # Primary symbol
+MULTI_ASSET_MODE=true         # Enable multi-asset
+MULTI_ASSETS=BTC,ETH,SOL      # Assets to trade
+MAX_POSITIONS=3               # Max concurrent positions
 MAX_LEVERAGE=5                # Maximum leverage
 POSITION_SIZE_PCT=50          # Base position size %
-
-# Multi-Asset Mode
-MULTI_ASSET_MODE=true         # Enable multi-asset
-MULTI_ASSETS=SOL,ETH,BTC      # Assets to trade
-MAX_POSITIONS=3               # Max concurrent positions
-
-# Paper Trading
-PAPER_TRADING=false           # Enable paper mode
-PAPER_TRADING_BALANCE=1000    # Starting virtual balance
-
-# Risk Management
-MAX_DAILY_LOSS_PCT=5          # Daily loss kill switch
-MAX_DRAWDOWN_PCT=10           # Max drawdown allowed
-MIN_SIGNAL_SCORE=7            # Minimum signal quality (1-10)
-
-# Pro Trading
-ATR_SL_MULTIPLIER=1.5         # SL = ATR × multiplier
-ATR_TP_MULTIPLIER=4.0         # TP = ATR × multiplier
-SWING_COOLDOWN=300            # Seconds between signals
-
-# Telegram
-TELEGRAM_BOT_TOKEN=...        # From @BotFather
-TELEGRAM_CHAT_ID=...          # Your chat ID
 ```
+
+### **Signal Quality**
+```env
+MIN_SIGNAL_SCORE=7            # Minimum score (1-10)
+SIGNAL_CONFIRMATION_SCANS=3   # Confirmations needed
+SWING_COOLDOWN=600            # Seconds between signals
+```
+
+### **Risk Management**
+```env
+RISK_PER_TRADE_PCT=2.0        # Risk per trade
+MAX_DAILY_LOSS_PCT=5          # Daily loss limit
+MAX_DRAWDOWN_PCT=10           # Max drawdown
+ATR_SL_MULTIPLIER=1.2         # SL = ATR × multiplier
+ATR_TP_MULTIPLIER=4.5         # TP = ATR × multiplier
+```
+
+### **Human Logic**
+```env
+USE_HUMAN_LOGIC=true          # Enable human-like logic
+HUMAN_LOGIC_WEIGHT=2.0        # Signal weight (1.0-3.0)
+```
+
+### **Kelly Criterion**
+```env
+KELLY_ENABLED=true
+KELLY_FRACTION=0.5            # Half-Kelly for safety
+```
+
+---
+
+## 🐛 Debugging Tools
+
+```bash
+# Full component test
+python debug_bot.py
+
+# Signal debugging
+python debug_signals.py
+
+# Score breakdown
+python diagnose_score.py
+
+# Quick signal test
+python quick_signal_test.py
+
+# Live signal test
+python test_live_signals.py
+```
+
+---
+
+## 🗄️ Database Schema
+
+The bot uses PostgreSQL with these tables:
+
+| Table | Purpose |
+|-------|---------|
+| `trades` | Completed trade history |
+| `signals` | Generated signals |
+| `ml_predictions` | ML model predictions (future) |
+| `account_snapshots` | Account balance history |
+| `performance_metrics` | Performance tracking |
 
 ---
 
@@ -366,51 +506,21 @@ TELEGRAM_CHAT_ID=...          # Your chat ID
 
 | Metric | Target |
 |--------|--------|
-| Win Rate | 70% |
-| Risk-Reward | 3:1 |
-| Daily Target | +2-5% |
+| Win Rate | 65-70% |
+| Risk-Reward | 3:1+ |
+| Daily Target | +1-3% |
 | Max Daily Loss | -5% (kill switch) |
 | Max Drawdown | -10% |
-| Trades/Day | 5-15 (quality focused) |
+| Trades/Day | 3-10 (quality focused) |
 
 ---
 
 ## 🔐 Security
 
-- ✅ API keys automatically masked in logs
-- ✅ Tokens hidden: `8374468872:AAG...aOGI`
-- ✅ HTTP requests sanitized
-- ✅ No sensitive data in git repository
+- ✅ API keys masked in logs
+- ✅ Secrets hidden in Telegram
+- ✅ No sensitive data in git
 - ✅ Dedicated API wallet recommended
-
----
-
-## 🆘 Support & Monitoring
-
-### **Health Checks**
-```bash
-# Check bot status
-pm2 status hyperbot
-pm2 logs hyperbot --lines 50
-
-# Check in Telegram
-/status
-/logs
-```
-
-### **Diagnostics**
-```bash
-# Run diagnostic script
-./diagnose_vps.sh
-
-# Check database
-/dbstats  # in Telegram
-```
-
-### **Common Issues**
-- **Not trading?** Check `/status` and `/logs` for errors
-- **Kill switch active?** Check `/pnl` - may have hit -5% daily loss
-- **Database issues?** Verify `DATABASE_URL` in `.env`
 
 ---
 
@@ -418,59 +528,25 @@ pm2 logs hyperbot --lines 50
 
 This bot is a **trading tool**, not financial advice:
 - Cryptocurrency trading is highly risky
-- Past performance does not guarantee future results
+- Past performance ≠ future results
 - Only trade with capital you can afford to lose
 - Monitor the bot regularly
-- Understand the strategies before deploying
-- Start with small capital and testnet first
+- Start with testnet/paper trading first
 
 ---
 
 ## 📈 Getting Started Guide
 
-1. **Test on Testnet First**
-   - Set `HYPERLIQUID_TESTNET=true` in `.env`
-   - Use testnet tokens (free)
-   - Verify all features work
-
-2. **Start Small on Mainnet**
-   - Begin with $50-100
-   - Monitor for 24-48 hours
-   - Verify P&L matches expectations
-
-3. **Scale Gradually**
-   - Increase capital slowly
-   - Adjust position size (`POSITION_SIZE_PCT`)
-   - Monitor risk metrics closely
-
-4. **Stay Informed**
-   - Check Telegram daily
-   - Review `/analytics` weekly
-   - Update bot regularly (`git pull`)
+1. **Test on Paper First** - `PAPER_TRADING=true`
+2. **Try Testnet** - `TESTNET=true`
+3. **Start Small** - $50-100 on mainnet
+4. **Monitor Daily** - Check Telegram
+5. **Scale Gradually** - Increase position size slowly
 
 ---
 
-## 🚀 Next Steps
-
-1. Read **[PRODUCTION_GUIDE.md](PRODUCTION_GUIDE.md)** for complete details
-2. Set up your `.env` file with correct API keys
-3. Test on testnet first
-4. Deploy to production with small capital
-5. Monitor via Telegram
-6. Scale gradually as confidence grows
-
----
-
-## 📞 Contact & Contributing
-
-- **Issues**: [GitHub Issues](https://github.com/web3firm/hyperbot/issues)
-- **Pull Requests**: Welcome! Please test thoroughly
-- **Documentation**: Help improve guides
-
----
-
-**Version**: 4.0 (Pro Trading Features)  
-**Last Updated**: December 5, 2025  
+**Version**: 5.1 (Code Cleanup + Human-Like Trading Intelligence)  
+**Last Updated**: December 22, 2025  
 **License**: MIT
 
-**⚡ Ready to trade? Let's go! 🚀**
+**⚡ Ready to trade like an institution? Let's go! 🚀**
