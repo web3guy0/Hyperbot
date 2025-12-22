@@ -1767,26 +1767,28 @@ class HyperAIBot:
                                 logger.debug(f"Failed to send manual position notification: {e}")
                     
                     # Manage each tracked position
-                    for symbol, position in list(self.position_manager.positions.items()):
+                    for symbol_key, position in list(self.position_manager.positions.items()):
                         exit_reason = await self.position_manager.manage_position(position, candles)
                         
                         if exit_reason:
                             # ACTUALLY CLOSE THE POSITION!
-                            logger.warning(f"🚨 Early exit triggered for {symbol}: {exit_reason.value}")
+                            # Use position.symbol (e.g., "HYPE"), not symbol_key (e.g., "HYPE_long")
+                            actual_symbol = position.symbol
+                            logger.warning(f"🚨 Early exit triggered for {actual_symbol}: {exit_reason.value}")
                             try:
                                 # Cancel existing orders first
-                                self.order_manager.cancel_all(symbol)
+                                self.order_manager.cancel_all(actual_symbol)
                                 
                                 # Close position with market order
-                                close_result = self.order_manager.market_close(symbol)
+                                close_result = self.order_manager.market_close(actual_symbol)
                                 if close_result.get('status') == 'ok':
-                                    logger.info(f"✅ {symbol} position closed via early exit")
-                                    # Remove from tracking
-                                    self.position_manager.remove_position(symbol)
+                                    logger.info(f"✅ {actual_symbol} position closed via early exit")
+                                    # Remove from tracking (use the key, not symbol)
+                                    self.position_manager.remove_position(actual_symbol)
                                 else:
-                                    logger.error(f"❌ Failed to close {symbol}: {close_result}")
+                                    logger.error(f"❌ Failed to close {actual_symbol}: {close_result}")
                             except Exception as e:
-                                logger.error(f"❌ Error closing {symbol} on early exit: {e}")
+                                logger.error(f"❌ Error closing {actual_symbol} on early exit: {e}")
                             
                             # Send Telegram notification
                             if self.telegram_bot:
