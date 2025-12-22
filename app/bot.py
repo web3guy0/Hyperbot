@@ -887,6 +887,23 @@ class HyperAIBot:
                                 side=trade_side
                             )
                         
+                        # Record to Performance Engine for self-learning
+                        if self.strategy:
+                            try:
+                                self.strategy.record_trade_result(
+                                    symbol=coin,
+                                    direction=trade_side,
+                                    pnl=closed_pnl,
+                                    pnl_percent=pnl_percent,
+                                    entry_price=entry_price,
+                                    exit_price=price,
+                                    duration_seconds=duration_seconds or 0,
+                                    regime=None,  # Will be determined by performance engine
+                                    session=None  # Will be determined by performance engine
+                                )
+                            except Exception as perf_err:
+                                logger.debug(f"Performance engine recording skipped: {perf_err}")
+                        
                         # Clean up tracking
                         del self._active_trade_ids[coin]
                         self._save_active_trades()
@@ -1046,6 +1063,44 @@ class HyperAIBot:
                             )
                             logger.info(f"📊 Kelly: Recorded trade {symbol} P&L: ${realized_pnl:+.2f}")
                             del self._position_details[symbol]
+                        
+                        # Record to Performance Engine for self-learning
+                        if self.strategy and symbol in self._position_details:
+                            details = self._position_details[symbol]
+                            realized_pnl = details.get('unrealized_pnl', 0)
+                            entry_price = details['entry_price']
+                            size = details['size']
+                            side = details['side']
+                            
+                            # Calculate PnL percent
+                            pnl_percent = (realized_pnl / (size * entry_price)) * 100 if size > 0 and entry_price > 0 else 0
+                            
+                            # Calculate exit price
+                            if size > 0 and entry_price > 0:
+                                if side == 'long':
+                                    exit_price = entry_price + (realized_pnl / size)
+                                else:
+                                    exit_price = entry_price - (realized_pnl / size)
+                            else:
+                                exit_price = entry_price
+                            
+                            # Get duration if available
+                            trade_info = self._active_trade_ids.get(symbol, {})
+                            entry_time = trade_info.get('entry_time')
+                            duration_seconds = int((datetime.now(timezone.utc) - entry_time).total_seconds()) if entry_time else 0
+                            
+                            try:
+                                self.strategy.record_trade_result(
+                                    symbol=symbol,
+                                    direction=side,
+                                    pnl=realized_pnl,
+                                    pnl_percent=pnl_percent,
+                                    entry_price=entry_price,
+                                    exit_price=exit_price,
+                                    duration_seconds=duration_seconds
+                                )
+                            except Exception as perf_err:
+                                logger.debug(f"Performance engine recording skipped: {perf_err}")
                         
                         # Clean up backup targets
                         if hasattr(self.order_manager, 'position_targets') and symbol in self.order_manager.position_targets:
