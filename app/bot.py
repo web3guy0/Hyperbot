@@ -150,6 +150,18 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 
+async def interruptible_sleep(seconds: float) -> bool:
+    """Sleep that wakes up immediately on shutdown signal.
+    
+    Returns True if sleep completed, False if interrupted by shutdown.
+    """
+    try:
+        await asyncio.wait_for(shutdown_event.wait(), timeout=seconds)
+        return False  # Shutdown requested
+    except asyncio.TimeoutError:
+        return True  # Normal sleep completed
+
+
 class AccountManagerProxy:
     """
     Dynamic proxy that always returns fresh values from the bot.
@@ -1303,7 +1315,8 @@ class HyperAIBot:
                 try:
                     # Check if bot is paused
                     if self.is_paused:
-                        await asyncio.sleep(5)
+                        if not await interruptible_sleep(5):
+                            break  # Shutdown requested
                         continue
                     
                     # Check kill switch
@@ -1326,14 +1339,16 @@ class HyperAIBot:
                     self.drawdown_monitor.update()
                     if self.drawdown_monitor.is_paused:
                         logger.warning("⏸️  Paused due to drawdown")
-                        await asyncio.sleep(30)
+                        if not await interruptible_sleep(30):
+                            break  # Shutdown requested
                         continue
                     
                     # Get market data
                     market_data = self.websocket.get_market_data(self.symbol)
                     
                     if not market_data or not market_data.get('price'):
-                        await asyncio.sleep(1)
+                        if not await interruptible_sleep(1):
+                            break  # Shutdown requested
                         continue
                     
                     # PHASE 3 OPTIMIZATION: Use WebSocket candles + smart fallback
@@ -1678,7 +1693,8 @@ class HyperAIBot:
                     # Loop delay - adaptive based on timeframe
                     # 1m = 1s, 5m = 5s, 15m = 15s (no need to scan faster than candles update)
                     scan_delay = {'1m': 1, '5m': 5, '15m': 15, '1h': 30, '4h': 60}.get(self.timeframe, 1)
-                    await asyncio.sleep(scan_delay)
+                    if not await interruptible_sleep(scan_delay):
+                        break  # Shutdown requested
                     
                 except Exception as e:
                     error_str = str(e).lower()
@@ -1706,7 +1722,8 @@ class HyperAIBot:
                         if self.error_handler and self._transient_error_count % 10 == 0:
                             await self.error_handler.handle_transient_error(e, "Trading Loop - API Outage")
                         
-                        await asyncio.sleep(backoff_seconds)
+                        if not await interruptible_sleep(backoff_seconds):
+                            break  # Shutdown requested
                     else:
                         # Reset transient counter on non-transient error
                         self._transient_error_count = 0
@@ -1717,7 +1734,8 @@ class HyperAIBot:
                         if self.error_handler:
                             await self.error_handler.handle_critical_error(e, "Trading Loop Iteration")
                         
-                        await asyncio.sleep(5)
+                        if not await interruptible_sleep(5):
+                            break  # Shutdown requested
         
         finally:
             # Stop Position Manager monitoring
@@ -1744,7 +1762,8 @@ class HyperAIBot:
                 try:
                     # Skip if paused
                     if self.is_paused:
-                        await asyncio.sleep(5)
+                        if not await interruptible_sleep(5):
+                            break  # Shutdown requested
                         continue
                     
                     # Get current candles for indicator calculation
@@ -1804,13 +1823,15 @@ class HyperAIBot:
                                     logger.debug(f"Failed to send early exit notification: {e}")
                     
                     # Use interval from config
-                    await asyncio.sleep(self.position_manager.config.get('check_interval_seconds', 5))
+                    if not await interruptible_sleep(self.position_manager.config.get('check_interval_seconds', 5)):
+                        break  # Shutdown requested
                     
                 except asyncio.CancelledError:
                     break
                 except Exception as e:
                     logger.error(f"Position Manager error: {e}", exc_info=True)
-                    await asyncio.sleep(10)  # Back off on error
+                    if not await interruptible_sleep(10):
+                        break  # Shutdown requested
                     
         except asyncio.CancelledError:
             logger.info("🔄 Position Manager loop cancelled")
