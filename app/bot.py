@@ -1113,22 +1113,22 @@ class HyperAIBot:
                     )
                     
                     # ==================== SWING TRAILING ====================
-                    # At +7% PnL: Move SL to lock in +3% profit (breakeven + buffer)
+                    # At +3% PnL: Move SL to breakeven + tiny buffer
                     # TP stays UNTOUCHED - let the original TP hit
                     
                     # Only trail SL, never touch TP
-                    if unrealized_pnl_pct >= 7.0 and can_update_trail:
-                        # Calculate new SL at +3% PnL (0.6% price with 5x leverage)
+                    if unrealized_pnl_pct >= 3.0 and can_update_trail:
+                        # Calculate new SL at breakeven + 0.2% buffer
                         if is_long:
-                            # Move SL to entry + 0.6% price = +3% PnL locked
-                            trailing_sl = float(entry_price * Decimal('1.006'))
+                            # Move SL to entry + 0.2% price = locks breakeven
+                            trailing_sl = float(entry_price * Decimal('1.002'))
                             if trailing_sl > float(current_price):
-                                trailing_sl = float(entry_price * Decimal('1.003'))  # Fallback to +1.5% PnL
+                                trailing_sl = float(entry_price * Decimal('1.001'))  # Tighter fallback
                         else:
-                            # Short: Move SL to entry - 0.6% price = +3% PnL locked
-                            trailing_sl = float(entry_price * Decimal('0.994'))
+                            # Short: Move SL to entry - 0.2% price = locks breakeven
+                            trailing_sl = float(entry_price * Decimal('0.998'))
                             if trailing_sl < float(current_price):
-                                trailing_sl = float(entry_price * Decimal('0.997'))  # Fallback to +1.5% PnL
+                                trailing_sl = float(entry_price * Decimal('0.999'))  # Tighter fallback
                         
                         # Only update if we haven't already trailed to this level
                         current_sl = order_info.get('sl_price', 0)

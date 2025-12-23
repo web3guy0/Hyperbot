@@ -48,21 +48,21 @@ class AdaptiveRiskManager:
         self.max_risk_per_trade = Decimal(os.getenv('MAX_RISK_PER_TRADE_PCT', '3.0'))
         self.base_leverage = int(os.getenv('MAX_LEVERAGE', '5'))
         
-        # ATR multipliers for TP/SL - PROFIT FOCUSED
+        # ATR multipliers for TP/SL - REALISTIC for 15m swings
+        # HYPE typical ATR is ~0.35% on 15m
         # With 5x leverage:
-        #   - 1% price move = 5% PnL
-        #   - SL at 1.2x ATR (~0.35%) = ~1.75% loss
-        #   - TP at 4.5x ATR (~1.3%) = ~6.5% gain  
-        #   - R:R = 3.75:1 = You can lose 3 trades, win 1, and still profit!
-        self.atr_sl_multiplier = Decimal(os.getenv('ATR_SL_MULTIPLIER', '1.2'))
-        self.atr_tp_multiplier = Decimal(os.getenv('ATR_TP_MULTIPLIER', '4.5'))
+        #   - SL at 1.5x ATR (~0.5%) = ~2.5% loss with 5x
+        #   - TP at 2.5x ATR (~0.9%) = ~4.5% gain with 5x
+        #   - R:R = 1.8:1 - achievable on 15m swings!
+        self.atr_sl_multiplier = Decimal(os.getenv('ATR_SL_MULTIPLIER', '1.5'))
+        self.atr_tp_multiplier = Decimal(os.getenv('ATR_TP_MULTIPLIER', '2.5'))  # Reduced from 4.5!
         
-        # Minimum/Maximum bounds - CRITICAL FOR SMALL ACCOUNTS
-        # With 10x leverage: 1.2% SL = 12% account loss MAX
-        self.min_sl_pct = Decimal('0.3')   # Minimum 0.3% SL (tight but safe)
-        self.max_sl_pct = Decimal('1.2')   # HARD CAP: 1.2% SL max (12% loss with 10x)
-        self.min_tp_pct = Decimal('0.8')   # Minimum 0.8% TP
-        self.max_tp_pct = Decimal('5.0')   # Maximum 5% TP (50% gain with 10x)
+        # Minimum/Maximum bounds - REALISTIC FOR SWINGS
+        # With 10x leverage: 1% SL = 10% account loss MAX
+        self.min_sl_pct = Decimal('0.4')   # Minimum 0.4% SL
+        self.max_sl_pct = Decimal('1.0')   # HARD CAP: 1.0% SL max
+        self.min_tp_pct = Decimal('0.6')   # Minimum 0.6% TP
+        self.max_tp_pct = Decimal('2.0')   # Maximum 2% TP (realistic for 15m!)
         
         # Risk reduction after losses
         self.consecutive_loss_count = 0
@@ -129,9 +129,10 @@ class AdaptiveRiskManager:
         sl_pct = max(self.min_sl_pct, min(self.max_sl_pct, sl_pct))
         tp_pct = max(self.min_tp_pct, min(self.max_tp_pct, tp_pct))
         
-        # Ensure R:R is at least 2.5:1 for sustainable profits
-        if tp_pct < sl_pct * Decimal('2.5'):
-            tp_pct = sl_pct * Decimal('3.0')  # Force 3:1 minimum R:R
+        # Ensure minimum R:R of 1.5:1 (realistic for 15m swings)
+        # OLD: 2.5:1 was forcing TP 5%+ away - UNREACHABLE!
+        if tp_pct < sl_pct * Decimal('1.5'):
+            tp_pct = sl_pct * Decimal('1.5')  # Force 1.5:1 minimum R:R
         
         # Calculate actual price levels
         if direction == 'long':
