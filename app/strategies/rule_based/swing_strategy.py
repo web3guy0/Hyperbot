@@ -345,6 +345,7 @@ class SwingStrategy:
             smc_analysis=smc_analysis,
             of_analysis=of_analysis,
             current_price=current_price,
+            candles=candles,  # Pass candles for pullback detection
         )
         
         short_score = self._calculate_signal_score(
@@ -355,6 +356,7 @@ class SwingStrategy:
             smc_analysis=smc_analysis,
             of_analysis=of_analysis,
             current_price=current_price,
+            candles=candles,  # Pass candles for pullback detection
         )
         
         # Apply enhanced scoring (VWAP, Divergence, Volume)
@@ -472,6 +474,22 @@ class SwingStrategy:
                 logger.debug(f"⏳ No signal: LONG={long_enhanced}/{effective_threshold}, SHORT={short_enhanced}/{effective_threshold} (need {effective_threshold}+)")
             return None
         
+        # ==================== CRITICAL: RSI EXTREME HARD BLOCK ====================
+        # This is THE PRIMARY FIX for buying tops and selling bottoms.
+        # NEVER buy when overbought, NEVER sell when oversold!
+        rsi = indicators.get('rsi')
+        if rsi:
+            if direction == 'long' and rsi > 65:
+                logger.warning(f"🚫 RSI HARD BLOCK: Cannot LONG with RSI={rsi:.0f} (overbought!) - rejecting signal")
+                self._pending_signal = None
+                self._confirmation_count = 0
+                return None
+            elif direction == 'short' and rsi < 35:
+                logger.warning(f"🚫 RSI HARD BLOCK: Cannot SHORT with RSI={rsi:.0f} (oversold!) - rejecting signal")
+                self._pending_signal = None
+                self._confirmation_count = 0
+                return None
+        
         # ==================== CRITICAL: HARD COUNTER-TREND BLOCK ====================
         # This is a HARD REJECTION, not just a penalty. Counter-trend trades are the
         # primary cause of losses in trending markets.
@@ -486,6 +504,35 @@ class SwingStrategy:
             self._pending_signal = None
             self._confirmation_count = 0
             return None
+        
+        # ==================== CRITICAL: CANDLE CHASE HARD BLOCK ====================
+        # This prevents buying after multiple green candles or shorting after multiple red candles.
+        # The MOST COMMON mistake is chasing momentum after the move already happened!
+        if len(candles) >= 5:
+            recent_candles = candles[-5:]
+            green_count = 0
+            red_count = 0
+            for c in recent_candles:
+                close_price = Decimal(str(c.get('close', c.get('c', 0))))
+                open_price = Decimal(str(c.get('open', c.get('o', 0))))
+                if close_price > open_price:
+                    green_count += 1
+                elif close_price < open_price:
+                    red_count += 1
+            
+            # HARD BLOCK: Can't LONG after 4+ green candles (you're buying the top!)
+            if direction == 'long' and green_count >= 4:
+                logger.warning(f"🚫 CHASE HARD BLOCK: Cannot LONG after {green_count} green candles - buying the TOP!")
+                self._pending_signal = None
+                self._confirmation_count = 0
+                return None
+            
+            # HARD BLOCK: Can't SHORT after 4+ red candles (you're selling the bottom!)
+            if direction == 'short' and red_count >= 4:
+                logger.warning(f"🚫 CHASE HARD BLOCK: Cannot SHORT after {red_count} red candles - selling the BOTTOM!")
+                self._pending_signal = None
+                self._confirmation_count = 0
+                return None
         
         # ==================== SUPERTREND HARD BLOCK ====================
         # If supertrend is strongly against the trade direction, reject
@@ -687,15 +734,19 @@ class SwingStrategy:
         smc_analysis: Dict,
         of_analysis: Dict,
         current_price: Decimal,
+        candles: List[Dict] = None,  # For pullback detection
     ) -> int:
         """
-        Calculate comprehensive signal score.
+        Calculate comprehensive signal score with PULLBACK ENTRY REQUIREMENT.
         
         Scoring (0-10):
         - Technical: 0-4 points
         - SMC: 0-2 points
         - HTF: 0-2 points
         - Order Flow: 0-2 points
+        
+        CRITICAL: Anti-chase logic penalizes buying after green candles
+        or selling after red candles. Only enters on pullbacks!
         """
         score = 0
         
@@ -707,6 +758,29 @@ class SwingStrategy:
         adx = indicators.get('adx')
         macd = indicators.get('macd', {})
         
+        # ==================== PULLBACK ENTRY REQUIREMENT ====================
+        # THE CRITICAL FIX: Don't buy AFTER green candles or sell AFTER red candles!
+        # Wait for a pullback (retracement) before entering.
+        # This prevents buying tops and selling bottoms.
+        
+        # Check recent candle colors for pullback detection
+        candle_list = candles if candles else []
+        recent_closes = [Decimal(str(c.get('close', c.get('c', 0)))) for c in candle_list[-5:]] if len(candle_list) >= 5 else []
+        recent_opens = [Decimal(str(c.get('open', c.get('o', 0)))) for c in candle_list[-5:]] if len(candle_list) >= 5 else []
+        
+        # Count consecutive candle colors
+        green_count = 0
+        red_count = 0
+        for i in range(len(recent_closes) - 1, -1, -1):  # Most recent first
+            if recent_closes[i] > recent_opens[i]:
+                green_count += 1
+                red_count = 0  # Reset
+            elif recent_closes[i] < recent_opens[i]:
+                red_count += 1
+                green_count = 0  # Reset
+            else:
+                break  # Doji breaks the streak
+        
         if direction == 'long':
             # EMA 200 FILTER (Critical - institutional line in the sand)
             # Price below EMA 200 = DON'T LONG (fighting major trend)
@@ -716,15 +790,36 @@ class SwingStrategy:
             elif ema_200 and current_price > ema_200:
                 score += 0.5  # Small bonus for trend alignment
             
-            # RSI condition (0-1 point) - STRICT for high win rate
-            # Only give full points for genuinely favorable conditions
-            if rsi and rsi < 40:
-                score += 1  # Truly oversold - excellent entry
-            elif rsi and rsi < 55:
-                score += 0.5  # Mildly oversold - acceptable
-            # RSI > 55 = no points (too extended for quality entry)
+            # ==================== ANTI-CHASE FILTER (CRITICAL) ====================
+            # DON'T BUY after 3+ consecutive green candles - the move already happened!
+            # Only buy on RED candles (pullbacks) when RSI is extended
+            if green_count >= 3:
+                score -= 4  # Heavy penalty - chasing!
+                logger.debug(f"   🚫 ANTI-CHASE: -{4} (Can't LONG after {green_count} green candles!)")
+            elif green_count >= 2:
+                score -= 2  # Moderate penalty
+                logger.debug(f"   ⚠️ ANTI-CHASE: -{2} (LONG after {green_count} green candles - risky)")
+            elif red_count >= 1:
+                score += 1.5  # BONUS for buying the dip (pullback entry)
+                logger.debug(f"   ✅ PULLBACK ENTRY: +1.5 (LONG on {red_count} red candle pullback)")
             
-            # EMA alignment (0-1 point)
+            # RSI condition (0-1 point) - MUCH STRICTER for pullback entries
+            # For LONGS: Only enter when truly oversold (pullback)
+            if rsi:
+                if rsi < 35:
+                    score += 2  # Deeply oversold - EXCELLENT pullback entry
+                    logger.debug(f"   ✅ RSI: +2 (Deeply oversold RSI={rsi:.0f})")
+                elif rsi < 45:
+                    score += 1  # Oversold - good pullback entry
+                    logger.debug(f"   ✅ RSI: +1 (Oversold RSI={rsi:.0f})")
+                elif rsi > 65:
+                    score -= 3  # OVERBOUGHT - terrible time to buy!
+                    logger.debug(f"   🚫 RSI: -{3} (Overbought RSI={rsi:.0f} - DON'T BUY!)")
+                elif rsi > 55:
+                    score -= 1  # Getting extended - not ideal
+                    logger.debug(f"   ⚠️ RSI: -{1} (Extended RSI={rsi:.0f})")
+            
+            # EMA alignment (0-1 point) - trend direction, NOT entry timing
             if ema_fast and ema_slow and ema_fast > ema_slow:
                 score += 1
             
@@ -737,11 +832,11 @@ class SwingStrategy:
                 elif adx < self.adx_weak:  # Weak/Ranging (<20)
                     score += 0.25  # Less confidence
             
-            # MACD (0-1 point)
+            # MACD (0-1 point) - trend confirmation, reduced weight
             if macd.get('histogram') and macd['histogram'] > 0:
-                score += 1
+                score += 0.5  # Reduced from 1 - don't chase MACD
             elif macd.get('macd') and macd.get('signal') and macd['macd'] > macd['signal']:
-                score += 0.5
+                score += 0.25
         
         else:  # short
             # EMA 200 FILTER (Critical - institutional line in the sand)
@@ -752,14 +847,36 @@ class SwingStrategy:
             elif ema_200 and current_price < ema_200:
                 score += 0.5  # Small bonus for trend alignment
             
-            # RSI condition - STRICT for high win rate
-            if rsi and rsi > 60:
-                score += 1  # Truly overbought - excellent short entry
-            elif rsi and rsi > 45:
-                score += 0.5  # Mildly overbought - acceptable
-            # RSI < 45 = no points (too extended for quality short)
+            # ==================== ANTI-CHASE FILTER (CRITICAL) ====================
+            # DON'T SHORT after 3+ consecutive red candles - the move already happened!
+            # Only short on GREEN candles (bounces) when RSI is extended
+            if red_count >= 3:
+                score -= 4  # Heavy penalty - chasing!
+                logger.debug(f"   🚫 ANTI-CHASE: -{4} (Can't SHORT after {red_count} red candles!)")
+            elif red_count >= 2:
+                score -= 2  # Moderate penalty
+                logger.debug(f"   ⚠️ ANTI-CHASE: -{2} (SHORT after {red_count} red candles - risky)")
+            elif green_count >= 1:
+                score += 1.5  # BONUS for selling the rip (bounce entry)
+                logger.debug(f"   ✅ BOUNCE ENTRY: +1.5 (SHORT on {green_count} green candle bounce)")
             
-            # EMA alignment
+            # RSI condition - MUCH STRICTER for bounce entries
+            # For SHORTS: Only enter when truly overbought (bounce)
+            if rsi:
+                if rsi > 65:
+                    score += 2  # Deeply overbought - EXCELLENT bounce entry
+                    logger.debug(f"   ✅ RSI: +2 (Deeply overbought RSI={rsi:.0f})")
+                elif rsi > 55:
+                    score += 1  # Overbought - good bounce entry
+                    logger.debug(f"   ✅ RSI: +1 (Overbought RSI={rsi:.0f})")
+                elif rsi < 35:
+                    score -= 3  # OVERSOLD - terrible time to sell!
+                    logger.debug(f"   🚫 RSI: -{3} (Oversold RSI={rsi:.0f} - DON'T SELL!)")
+                elif rsi < 45:
+                    score -= 1  # Getting oversold - not ideal
+                    logger.debug(f"   ⚠️ RSI: -{1} (Extended RSI={rsi:.0f})")
+            
+            # EMA alignment - trend direction
             if ema_fast and ema_slow and ema_fast < ema_slow:
                 score += 1
             
@@ -772,11 +889,11 @@ class SwingStrategy:
                 elif adx < self.adx_weak:  # Weak/Ranging (<20)
                     score += 0.25  # Less confidence
             
-            # MACD
+            # MACD - trend confirmation, reduced weight
             if macd.get('histogram') and macd['histogram'] < 0:
-                score += 1
+                score += 0.5  # Reduced from 1 - don't chase MACD
             elif macd.get('macd') and macd.get('signal') and macd['macd'] < macd['signal']:
-                score += 0.5
+                score += 0.25
         
         # ========== SMART MONEY (0-2 points) ==========
         smc_bias = smc_analysis.get('bias')
