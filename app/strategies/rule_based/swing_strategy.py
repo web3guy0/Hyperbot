@@ -125,6 +125,15 @@ class SwingStrategy:
         self.rsi_oversold_base = 30
         self.rsi_overbought_base = 70
         
+        # ==================== ANTI-CHASE CONFIGURATION ====================
+        # These prevent buying tops and selling bottoms
+        self.rsi_extreme_long_block = int(os.getenv('RSI_EXTREME_LONG_BLOCK', '65'))    # Block LONG if RSI > this
+        self.rsi_extreme_short_block = int(os.getenv('RSI_EXTREME_SHORT_BLOCK', '35'))  # Block SHORT if RSI < this
+        self.rsi_pullback_entry_long = int(os.getenv('RSI_PULLBACK_ENTRY_LONG', '45'))  # Good LONG entry if RSI < this
+        self.rsi_pullback_entry_short = int(os.getenv('RSI_PULLBACK_ENTRY_SHORT', '55')) # Good SHORT entry if RSI > this
+        self.max_chase_candles = int(os.getenv('MAX_CHASE_CANDLES', '4'))  # Block if 4+ same-direction candles
+        self.warn_chase_candles = int(os.getenv('WARN_CHASE_CANDLES', '3'))  # Penalty if 3+ same-direction candles
+        
         # Volume confirmation threshold
         self.volume_multiplier = Decimal(os.getenv('VOLUME_CONFIRMATION_MULT', '1.2'))  # Require 20% above average
         
@@ -479,13 +488,13 @@ class SwingStrategy:
         # NEVER buy when overbought, NEVER sell when oversold!
         rsi = indicators.get('rsi')
         if rsi:
-            if direction == 'long' and rsi > 65:
-                logger.warning(f"🚫 RSI HARD BLOCK: Cannot LONG with RSI={rsi:.0f} (overbought!) - rejecting signal")
+            if direction == 'long' and rsi > self.rsi_extreme_long_block:
+                logger.warning(f"🚫 RSI HARD BLOCK: Cannot LONG with RSI={rsi:.0f} (>{self.rsi_extreme_long_block} overbought!) - rejecting signal")
                 self._pending_signal = None
                 self._confirmation_count = 0
                 return None
-            elif direction == 'short' and rsi < 35:
-                logger.warning(f"🚫 RSI HARD BLOCK: Cannot SHORT with RSI={rsi:.0f} (oversold!) - rejecting signal")
+            elif direction == 'short' and rsi < self.rsi_extreme_short_block:
+                logger.warning(f"🚫 RSI HARD BLOCK: Cannot SHORT with RSI={rsi:.0f} (<{self.rsi_extreme_short_block} oversold!) - rejecting signal")
                 self._pending_signal = None
                 self._confirmation_count = 0
                 return None
@@ -520,15 +529,15 @@ class SwingStrategy:
                 elif close_price < open_price:
                     red_count += 1
             
-            # HARD BLOCK: Can't LONG after 4+ green candles (you're buying the top!)
-            if direction == 'long' and green_count >= 4:
+            # HARD BLOCK: Can't LONG after N+ green candles (you're buying the top!)
+            if direction == 'long' and green_count >= self.max_chase_candles:
                 logger.warning(f"🚫 CHASE HARD BLOCK: Cannot LONG after {green_count} green candles - buying the TOP!")
                 self._pending_signal = None
                 self._confirmation_count = 0
                 return None
             
-            # HARD BLOCK: Can't SHORT after 4+ red candles (you're selling the bottom!)
-            if direction == 'short' and red_count >= 4:
+            # HARD BLOCK: Can't SHORT after N+ red candles (you're selling the bottom!)
+            if direction == 'short' and red_count >= self.max_chase_candles:
                 logger.warning(f"🚫 CHASE HARD BLOCK: Cannot SHORT after {red_count} red candles - selling the BOTTOM!")
                 self._pending_signal = None
                 self._confirmation_count = 0
