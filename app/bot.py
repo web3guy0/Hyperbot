@@ -1113,22 +1113,24 @@ class HyperAIBot:
                     )
                     
                     # ==================== SWING TRAILING ====================
-                    # At +3% PnL: Move SL to breakeven + tiny buffer
-                    # TP stays UNTOUCHED - let the original TP hit
+                    # At +2.5% PnL: Move SL to breakeven to protect profit
+                    # This catches profits that would otherwise reverse to losses
+                    # 
+                    # Your data shows many trades hit +5-9% PnL then reversed to loss
+                    # This trailing SL will lock in breakeven at +2.5% PnL
                     
-                    # Only trail SL, never touch TP
-                    if unrealized_pnl_pct >= 3.0 and can_update_trail:
-                        # Calculate new SL at breakeven + 0.2% buffer
+                    if unrealized_pnl_pct >= 2.5 and can_update_trail:
+                        # Calculate new SL at breakeven + tiny buffer
                         if is_long:
-                            # Move SL to entry + 0.2% price = locks breakeven
-                            trailing_sl = float(entry_price * Decimal('1.002'))
+                            # Move SL to entry + 0.15% price = locks small profit
+                            trailing_sl = float(entry_price * Decimal('1.0015'))
                             if trailing_sl > float(current_price):
-                                trailing_sl = float(entry_price * Decimal('1.001'))  # Tighter fallback
+                                trailing_sl = float(entry_price * Decimal('1.0005'))  # Tighter fallback
                         else:
-                            # Short: Move SL to entry - 0.2% price = locks breakeven
-                            trailing_sl = float(entry_price * Decimal('0.998'))
+                            # Short: Move SL to entry - 0.15% price = locks small profit
+                            trailing_sl = float(entry_price * Decimal('0.9985'))
                             if trailing_sl < float(current_price):
-                                trailing_sl = float(entry_price * Decimal('0.999'))  # Tighter fallback
+                                trailing_sl = float(entry_price * Decimal('0.9995'))  # Tighter fallback
                         
                         # Only update if we haven't already trailed to this level
                         current_sl = order_info.get('sl_price', 0)

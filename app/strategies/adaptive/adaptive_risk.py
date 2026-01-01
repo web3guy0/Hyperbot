@@ -48,21 +48,22 @@ class AdaptiveRiskManager:
         self.max_risk_per_trade = Decimal(os.getenv('MAX_RISK_PER_TRADE_PCT', '3.0'))
         self.base_leverage = int(os.getenv('MAX_LEVERAGE', '5'))
         
-        # ATR multipliers for TP/SL - REALISTIC for 15m swings
-        # HYPE typical ATR is ~0.35% on 15m
-        # With 5x leverage:
-        #   - SL at 1.5x ATR (~0.5%) = ~2.5% loss with 5x
-        #   - TP at 2.5x ATR (~0.9%) = ~4.5% gain with 5x
-        #   - R:R = 1.8:1 - achievable on 15m swings!
+        # ATR multipliers for TP/SL - TUNED FOR 10% PnL TARGET
+        # With 5x leverage: 2% price move = 10% PnL
+        # With 10x leverage: 1% price move = 10% PnL
+        # 
+        # HYPE typical ATR is ~$0.08-0.10 on 15m (~0.35%)
+        # SL at 1.5x ATR (~0.5%) = ~2.5-5% loss depending on leverage
+        # TP at 5x ATR (~1.8%) = ~9-18% gain depending on leverage
         self.atr_sl_multiplier = Decimal(os.getenv('ATR_SL_MULTIPLIER', '1.5'))
-        self.atr_tp_multiplier = Decimal(os.getenv('ATR_TP_MULTIPLIER', '2.5'))  # Reduced from 4.5!
+        self.atr_tp_multiplier = Decimal(os.getenv('ATR_TP_MULTIPLIER', '5.0'))  # Target ~10% PnL
         
-        # Minimum/Maximum bounds - REALISTIC FOR SWINGS
-        # With 10x leverage: 1% SL = 10% account loss MAX
-        self.min_sl_pct = Decimal('0.4')   # Minimum 0.4% SL
-        self.max_sl_pct = Decimal('1.0')   # HARD CAP: 1.0% SL max
-        self.min_tp_pct = Decimal('0.6')   # Minimum 0.6% TP
-        self.max_tp_pct = Decimal('2.0')   # Maximum 2% TP (realistic for 15m!)
+        # Minimum/Maximum bounds - TARGET 10% PnL
+        # With 5x: 2% price = 10% PnL, with 10x: 1% price = 10% PnL
+        self.min_sl_pct = Decimal('0.4')   # Minimum 0.4% SL (~2-4% loss)
+        self.max_sl_pct = Decimal('0.8')   # Maximum 0.8% SL (~4-8% loss)
+        self.min_tp_pct = Decimal('1.0')   # Minimum 1.0% TP (~5-10% gain)
+        self.max_tp_pct = Decimal('2.0')   # Maximum 2.0% TP (~10-20% gain)
         
         # Risk reduction after losses
         self.consecutive_loss_count = 0
