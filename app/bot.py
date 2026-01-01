@@ -1091,9 +1091,15 @@ class HyperAIBot:
                 symbol = pos['symbol']
                 entry_price = Decimal(str(pos.get('entry_price', 0)))
                 unrealized_pnl = Decimal(str(pos.get('unrealized_pnl', 0)))
-                # Prevent division by zero if entry_price=0
-                if entry_price > 0:
-                    unrealized_pnl_pct = (unrealized_pnl / (abs(Decimal(str(size))) * entry_price)) * 100
+                leverage = Decimal(str(pos.get('leverage', 1)))  # Get leverage from position data
+                
+                # Calculate ROE% (Return on Equity) - this is what traders care about!
+                # ROE = (unrealized_pnl / margin_used) * 100
+                # margin_used = position_value / leverage = (size * entry_price) / leverage
+                # So ROE = unrealized_pnl * leverage / (size * entry_price) * 100
+                if entry_price > 0 and size != 0:
+                    # This gives us ROE% (e.g., +2.8% with 10x leverage on 0.28% price move)
+                    unrealized_pnl_pct = (unrealized_pnl / (abs(Decimal(str(size))) * entry_price)) * 100 * leverage
                 else:
                     unrealized_pnl_pct = Decimal('0')
                 current_price = Decimal(str(pos.get('mark_price', entry_price)))  # Use mark price
@@ -1106,68 +1112,84 @@ class HyperAIBot:
                 
                 if self._position_log_counter % 60 == 0:
                     logger.info(f"📈 Active position: {symbol} | Size: {size:.2f} | "
-                               f"Entry: ${entry_price:.3f} | Current: ${current_price:.3f} | P&L: ${unrealized_pnl:+.2f} ({unrealized_pnl_pct:+.1f}%)")
+                               f"Entry: ${entry_price:.3f} | Current: ${current_price:.3f} | "
+                               f"P&L: ${unrealized_pnl:+.2f} ({unrealized_pnl_pct:+.1f}% ROE @ {leverage}x)")
                 
                 # DYNAMIC TRAILING STOPS - Lock in profits as they grow!
-                # Uses OrderManagerV2 position tracking (no need for position_targets)
-                if symbol in self.order_manager.position_orders:
-                    order_info = self.order_manager.position_orders[symbol]
-                    is_long = size > 0
+                # Trailing SL works even if position wasn't opened by this bot instance
+                is_long = size > 0
+                
+                # Get or create position tracking
+                if symbol not in self.order_manager.position_orders:
+                    # Initialize tracking for existing position (bot restart case)
+                    self.order_manager.position_orders[symbol] = {
+                        'entry_price': float(entry_price),
+                        'size': abs(size),
+                        'is_buy': is_long,
+                        'sl_price': 0,
+                        'tp_price': 0,
+                        'timestamp': datetime.now(timezone.utc)
+                    }
+                    logger.info(f"📝 Initialized position tracking for existing {symbol} position")
+                
+                order_info = self.order_manager.position_orders[symbol]
+                
+                # Store entry price in order manager for trailing calculation
+                self.order_manager.set_entry_price(symbol, float(entry_price))
+                
+                # ==================== TRAILING STOP THROTTLE ====================
+                # Avoid spam orders - only update trailing stops every 30 seconds per symbol
+                now = datetime.now(timezone.utc)
+                last_trail = self._last_trail_update.get(symbol)
+                can_update_trail = (
+                    last_trail is None or 
+                    (now - last_trail).total_seconds() >= self._trail_update_interval
+                )
+                
+                # ==================== SWING TRAILING ====================
+                # At +2.5% ROE: Move SL to breakeven to protect profit
+                # This catches profits that would otherwise reverse to losses
+                # 
+                # Your data shows many trades hit +5-9% ROE then reversed to loss
+                # This trailing SL will lock in breakeven at +2.5% ROE
+                
+                if unrealized_pnl_pct >= 2.5 and can_update_trail:
+                    logger.info(f"🔔 TRAILING TRIGGER: {symbol} at {unrealized_pnl_pct:.1f}% ROE - activating trailing SL!")
                     
-                    # Store entry price in order manager for trailing calculation
-                    self.order_manager.set_entry_price(symbol, float(entry_price))
+                    # Calculate new SL at breakeven + tiny buffer
+                    if is_long:
+                        # Move SL to entry + 0.15% price = locks small profit
+                        trailing_sl = float(entry_price * Decimal('1.0015'))
+                        if trailing_sl > float(current_price):
+                            trailing_sl = float(entry_price * Decimal('1.0005'))  # Tighter fallback
+                    else:
+                        # Short: Move SL to entry - 0.15% price = locks small profit
+                        trailing_sl = float(entry_price * Decimal('0.9985'))
+                        if trailing_sl < float(current_price):
+                            trailing_sl = float(entry_price * Decimal('0.9995'))  # Tighter fallback
                     
-                    # ==================== TRAILING STOP THROTTLE ====================
-                    # Avoid spam orders - only update trailing stops every 30 seconds per symbol
-                    now = datetime.now(timezone.utc)
-                    last_trail = self._last_trail_update.get(symbol)
-                    can_update_trail = (
-                        last_trail is None or 
-                        (now - last_trail).total_seconds() >= self._trail_update_interval
-                    )
+                    # Only update if we haven't already trailed to this level
+                    current_sl = order_info.get('sl_price', 0)
+                    sl_improved = (is_long and trailing_sl > current_sl) or (not is_long and trailing_sl < current_sl)
                     
-                    # ==================== SWING TRAILING ====================
-                    # At +2.5% PnL: Move SL to breakeven to protect profit
-                    # This catches profits that would otherwise reverse to losses
-                    # 
-                    # Your data shows many trades hit +5-9% PnL then reversed to loss
-                    # This trailing SL will lock in breakeven at +2.5% PnL
-                    
-                    if unrealized_pnl_pct >= 2.5 and can_update_trail:
-                        # Calculate new SL at breakeven + tiny buffer
-                        if is_long:
-                            # Move SL to entry + 0.15% price = locks small profit
-                            trailing_sl = float(entry_price * Decimal('1.0015'))
-                            if trailing_sl > float(current_price):
-                                trailing_sl = float(entry_price * Decimal('1.0005'))  # Tighter fallback
-                        else:
-                            # Short: Move SL to entry - 0.15% price = locks small profit
-                            trailing_sl = float(entry_price * Decimal('0.9985'))
-                            if trailing_sl < float(current_price):
-                                trailing_sl = float(entry_price * Decimal('0.9995'))  # Tighter fallback
+                    if sl_improved or current_sl == 0:
+                        logger.info(f"🔒 TRAILING SL: At {unrealized_pnl_pct:.1f}% ROE - Moving SL to ${trailing_sl:.4f} (locks profit)")
                         
-                        # Only update if we haven't already trailed to this level
-                        current_sl = order_info.get('sl_price', 0)
-                        sl_improved = (is_long and trailing_sl > current_sl) or (not is_long and trailing_sl < current_sl)
-                        
-                        if sl_improved or current_sl == 0:
-                            logger.info(f"🔒 TRAILING SL: At {unrealized_pnl_pct:.1f}% PnL - Moving SL to ${trailing_sl:.4f} (locks +3% PnL)")
-                            
-                            try:
-                                # ONLY modify SL, keep TP untouched!
-                                result = await self.order_manager.modify_stops(
-                                    symbol=symbol,
-                                    new_sl=trailing_sl,
-                                    new_tp=None  # Explicitly None = don't touch TP
-                                )
-                                if result.get('success'):
-                                    self._last_trail_update[symbol] = now
-                                    order_info['sl_price'] = trailing_sl
-                                    logger.info(f"✅ SL updated on exchange (TP unchanged)")
-                                else:
-                                    logger.warning(f"⚠️ Failed to update SL: {result.get('error')}")
-                            except Exception as e:
-                                logger.error(f"❌ Error updating trailing SL: {e}")
+                        try:
+                            # ONLY modify SL, keep TP untouched!
+                            result = await self.order_manager.modify_stops(
+                                symbol=symbol,
+                                new_sl=trailing_sl,
+                                new_tp=None  # Explicitly None = don't touch TP
+                            )
+                            if result.get('success'):
+                                self._last_trail_update[symbol] = now
+                                order_info['sl_price'] = trailing_sl
+                                logger.info(f"✅ SL updated on exchange (TP unchanged)")
+                            else:
+                                logger.warning(f"⚠️ Failed to update SL: {result.get('error')}")
+                        except Exception as e:
+                            logger.error(f"❌ Error updating trailing SL: {e}")
                 
                 # Check if approaching SL/TP levels (warning system)
                 if unrealized_pnl_pct <= -0.8:  # Within 80% of typical -1% SL
