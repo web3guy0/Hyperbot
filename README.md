@@ -56,7 +56,6 @@ Hyperbot/
 │   │   │   ├── divergence.py         # RSI/MACD divergence
 │   │   │   ├── donchian.py           # Donchian channels
 │   │   │   ├── funding_rate.py       # Funding rate filter
-│   │   │   ├── human_logic.py        # 🆕 Human-like trading logic
 │   │   │   ├── market_regime.py      # Regime detection
 │   │   │   ├── multi_asset_correlation.py # BTC correlation
 │   │   │   ├── multi_timeframe.py    # MTF analysis
@@ -76,10 +75,17 @@ Hyperbot/
 │   │   └── keyboards.py          # Interactive buttons
 │   └── utils/
 │       ├── error_handler.py      # Error handling
-│       ├── indicator_calculator.py # Technical indicators
+│       ├── health_check.py       # 🆕 HTTP health check server
+│       ├── indicator_calculator.py # Shared indicator calculator
 │       ├── position_calculator.py # Position calculations
 │       ├── symbol_manager.py     # Symbol management
 │       └── trading_logger.py     # Logging utilities
+├── tests/                        # 🆕 Pytest unit tests
+│   ├── conftest.py               # Test fixtures
+│   ├── test_indicators.py        # RSI, EMA, ATR, ADX tests
+│   ├── test_pnl_calculations.py  # PnL, TP/SL, position sizing
+│   ├── test_risk_management.py   # Risk limits, drawdown, kill switch
+│   └── test_signals.py           # Anti-chase, RSI blocks, scoring
 ├── ml/
 │   ├── auto_trainer.py           # ML auto-retraining (future)
 │   ├── training/
@@ -95,13 +101,9 @@ Hyperbot/
 │   ├── bot_positions.json        # Position state persistence
 │   └── trades/                   # Trade logs (JSONL)
 ├── logs/                         # Application logs
-├── debug_bot.py                  # Component testing utility
-├── debug_signals.py              # Signal debugging utility
-├── diagnose_score.py             # Score breakdown analyzer
-├── quick_signal_test.py          # Quick signal tester
-├── test_live_signals.py          # Live signal tester
 ├── ecosystem.config.js           # PM2 process manager config
 ├── hyperbot.service              # Systemd service file
+├── pyrightconfig.json            # Type checking config
 ├── requirements.txt              # Python dependencies
 ├── .env.example                  # Environment template
 └── README.md                     # This file
@@ -467,23 +469,50 @@ KELLY_FRACTION=0.5            # Half-Kelly for safety
 
 ---
 
-## 🐛 Debugging Tools
+## 🧪 Testing
+
+The bot includes a comprehensive test suite with 67+ tests:
 
 ```bash
-# Full component test
-python debug_bot.py
+# Run all tests
+python -m pytest tests/ -v
 
-# Signal debugging
-python debug_signals.py
+# Run specific test category
+python -m pytest tests/test_indicators.py -v
+python -m pytest tests/test_pnl_calculations.py -v
+python -m pytest tests/test_signals.py -v
+python -m pytest tests/test_risk_management.py -v
 
-# Score breakdown
-python diagnose_score.py
+# Run with coverage
+python -m pytest tests/ --cov=app --cov-report=html
+```
 
-# Quick signal test
-python quick_signal_test.py
+---
 
-# Live signal test
-python test_live_signals.py
+## 🏥 Health Check API
+
+Built-in HTTP health check server for monitoring:
+
+```bash
+# Configure port in .env
+HEALTH_CHECK_PORT=8080
+```
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /health` | Liveness probe (200 if running) |
+| `GET /ready` | Readiness probe (200 if trading ready) |
+| `GET /status` | Detailed status with metrics |
+| `GET /metrics` | Prometheus-compatible metrics |
+
+```bash
+# Example health check
+curl http://localhost:8080/health
+{"status": "healthy", "heartbeat_age_seconds": 5.2}
+
+# Example status check
+curl http://localhost:8080/status
+{"uptime_human": "2d 5h 30m", "trades_executed": 45, ...}
 ```
 
 ---
@@ -545,8 +574,8 @@ This bot is a **trading tool**, not financial advice:
 
 ---
 
-**Version**: 5.1 (Code Cleanup + Human-Like Trading Intelligence)  
-**Last Updated**: December 22, 2025  
+**Version**: 5.2 (Professional Grade + Test Suite)  
+**Last Updated**: January 1, 2026  
 **License**: MIT
 
 **⚡ Ready to trade like an institution? Let's go! 🚀**

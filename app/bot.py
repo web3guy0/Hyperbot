@@ -104,6 +104,9 @@ from app.database.db_manager import DatabaseManager
 # Phase 5: Shared indicator calculator
 from app.utils.indicator_calculator import IndicatorCalculator
 
+# Health check for process monitoring
+from app.utils.health_check import HealthCheck
+
 # Create logs directory if it doesn't exist
 Path('logs').mkdir(exist_ok=True)
 
@@ -318,6 +321,10 @@ class HyperAIBot:
         
         # Database
         self.db: Optional[DatabaseManager] = None
+        
+        # Health check server for process monitoring
+        self.health_check: Optional[HealthCheck] = None
+        self._health_port = int(os.getenv('HEALTH_CHECK_PORT', '8080'))
         
         # Account tracking (simplified portfolio manager)
         self.account_value = Decimal('0')
@@ -1316,6 +1323,15 @@ class HyperAIBot:
         self.start_time = datetime.now(timezone.utc)
         loop_count = 0
         
+        # Start health check server for monitoring
+        try:
+            self.health_check = HealthCheck(self, self._health_port)
+            await self.health_check.start()
+            logger.info(f"🏥 Health check available at http://localhost:{self._health_port}/health")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not start health check server: {e}")
+            self.health_check = None
+        
         # CRASH RECOVERY: Load persisted trades from previous session
         recovered = self._load_active_trades()
         if recovered:
@@ -1366,6 +1382,10 @@ class HyperAIBot:
                             except Exception:
                                 pass
                         break
+                    
+                    # Update health check heartbeat every loop
+                    if self.health_check:
+                        self.health_check.record_heartbeat()
                     
                     # Update account state every 10 loops
                     if loop_count % 10 == 0:
@@ -1556,6 +1576,10 @@ class HyperAIBot:
                             signal = None
                     
                     if signal:
+                        # Record signal generation in health check
+                        if self.health_check:
+                            self.health_check.record_signal()
+                        
                         # ==================== RECOVERY MODE CHECK ====================
                         # Reduce position sizes after drawdown to limit further losses
                         if self.drawdown_monitor:
@@ -1679,6 +1703,10 @@ class HyperAIBot:
                                 self.kill_switch.record_trade(True)
                                 active_strategy.record_trade_execution(signal, result)
                                 
+                                # Record trade in health check
+                                if self.health_check:
+                                    self.health_check.record_trade()
+                                
                                 # Update multi-asset manager if in multi-asset mode
                                 if self.multi_asset_mode and self.asset_manager:
                                     position_side = 'long' if signal['side'].lower() == 'buy' else 'short'
@@ -1783,6 +1811,11 @@ class HyperAIBot:
                     await position_manager_task
                 except asyncio.CancelledError:
                     pass
+            
+            # Stop health check server
+            if self.health_check:
+                await self.health_check.stop()
+            
             await self.shutdown()
     
     async def _run_position_manager_loop(self):

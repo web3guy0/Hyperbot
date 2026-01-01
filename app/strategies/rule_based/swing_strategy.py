@@ -257,7 +257,7 @@ class SwingStrategy:
         Generate trading signal with full analysis.
         
         Args:
-            market_data: Market data containing candles
+            market_data: Market data containing candles and optional pre-calculated indicators
             account_state: Current account state
         
         Returns:
@@ -280,8 +280,26 @@ class SwingStrategy:
         
         # ==================== ANALYSIS LAYERS ====================
         
-        # 1. Calculate technical indicators
-        indicators = self._calculate_indicators(candles)
+        # 1. Use shared indicators if available (Phase 5 optimization)
+        # Otherwise calculate locally (fallback for testing/standalone use)
+        shared_indicators = market_data.get('indicators')
+        if shared_indicators:
+            # Use pre-calculated indicators from IndicatorCalculator
+            indicators = {
+                'rsi': shared_indicators.get('rsi'),
+                'ema_fast': shared_indicators.get('ema_fast'),
+                'ema_slow': shared_indicators.get('ema_slow'),
+                'ema_200': self._calculate_ema(prices, self.ema_trend),  # May differ from shared
+                'adx': shared_indicators.get('adx'),
+                'atr': shared_indicators.get('atr'),
+                'macd': shared_indicators.get('macd'),
+                'bb_bandwidth': self._calculate_bb_bandwidth(prices),  # Not in shared calc
+            }
+            logger.debug("📊 Using shared indicators (Phase 5 optimization)")
+        else:
+            # Fallback: calculate locally
+            indicators = self._calculate_indicators(candles)
+            
         if not indicators:
             return None
         
