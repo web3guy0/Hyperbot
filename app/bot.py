@@ -772,8 +772,22 @@ class HyperAIBot:
                     message = f"🚫 **ORDER CANCELLED**\n\n{coin} {side.upper()} {size} @ ${price}"
                 
                 if message:
-                    # Send async notification (don't block)
-                    asyncio.create_task(self._send_order_notification(message))
+                    # Send async notification using thread-safe method
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.call_soon_threadsafe(
+                            lambda m=message: asyncio.create_task(self._send_order_notification(m))
+                        )
+                    except RuntimeError:
+                        # No running loop - try to get the main loop
+                        try:
+                            loop = asyncio.get_event_loop()
+                            if loop.is_running():
+                                asyncio.run_coroutine_threadsafe(
+                                    self._send_order_notification(message), loop
+                                )
+                        except Exception:
+                            pass  # Silently skip notification if no loop available
                     
         except Exception as e:
             logger.error(f"Error in order update callback: {e}")
