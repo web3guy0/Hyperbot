@@ -136,9 +136,21 @@ class PositionManager:
         self.break_even_enabled = self.config.get('break_even', True)
         self.early_exit_enabled = self.config.get('early_exit', True)
         
-        # Default TP/SL percentages for manual positions
-        self.default_tp_pct = Decimal(str(self.config.get('default_tp_pct', 3.0)))
-        self.default_sl_pct = Decimal(str(self.config.get('default_sl_pct', 1.5)))
+        # FIXED PnL TARGETS - auto-calculate based on leverage
+        self.use_fixed_pnl = os.getenv('USE_FIXED_PNL_TARGETS', 'true').lower() == 'true'
+        self.target_tp_pnl = Decimal(os.getenv('TARGET_TP_PNL', '10'))  # 10% profit
+        self.target_sl_pnl = Decimal(os.getenv('TARGET_SL_PNL', '4'))   # 4% max loss
+        self.leverage = Decimal(os.getenv('MAX_LEVERAGE', '5'))
+        
+        # Calculate actual price % from PnL targets
+        if self.use_fixed_pnl:
+            self.default_tp_pct = self.target_tp_pnl / self.leverage  # e.g., 10% / 10x = 1% price
+            self.default_sl_pct = self.target_sl_pnl / self.leverage  # e.g., 4% / 10x = 0.4% price
+            logger.info(f"   Fixed PnL mode: TP={self.target_tp_pnl}% PnL ({self.default_tp_pct}% price), SL={self.target_sl_pnl}% loss ({self.default_sl_pct}% price)")
+        else:
+            # Fallback to config defaults
+            self.default_tp_pct = Decimal(str(self.config.get('default_tp_pct', 3.0)))
+            self.default_sl_pct = Decimal(str(self.config.get('default_sl_pct', 1.5)))
         
         # Health check thresholds
         self.health_check_interval = timedelta(seconds=30)
