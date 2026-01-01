@@ -1039,26 +1039,36 @@ class HLOrderManager:
         tpsl_verified = False
         if filled_size > 0 and (tp_price or sl_price):
             logger.info(f"📍 Setting TP/SL: TP=${tp_price}, SL=${sl_price}")
-            tpsl_results = self.set_tp_sl_sdk(symbol, filled_size, is_buy, tp_price, sl_price)
             
-            # CRITICAL: Verify TP/SL orders were placed successfully
-            # Check for errors in results
-            tp_ok = any(r.get('type') == 'tp' and 'result' in r for r in tpsl_results) if tp_price else True
-            sl_ok = any(r.get('type') == 'sl' and 'result' in r for r in tpsl_results) if sl_price else True
-            
-            if not tp_ok or not sl_ok:
-                # TP/SL placement failed - CRITICAL! Log warning but don't fail entry
-                # Position manager will retry protection
-                failed_orders = []
-                if tp_price and not tp_ok:
-                    failed_orders.append('TP')
-                if sl_price and not sl_ok:
-                    failed_orders.append('SL')
-                logger.error(f"⚠️ CRITICAL: {', '.join(failed_orders)} order(s) failed! Position is partially unprotected!")
-                logger.error(f"   Position manager will retry protection on next scan.")
-            else:
-                tpsl_verified = True
-                logger.info(f"✅ TP/SL orders verified successfully")
+            # Retry logic for TP/SL placement (up to 3 attempts)
+            max_retries = 3
+            for attempt in range(max_retries):
+                tpsl_results = self.set_tp_sl_sdk(symbol, filled_size, is_buy, tp_price, sl_price)
+                
+                # CRITICAL: Verify TP/SL orders were placed successfully
+                # Check for errors in results
+                tp_ok = any(r.get('type') == 'tp' and 'result' in r for r in tpsl_results) if tp_price else True
+                sl_ok = any(r.get('type') == 'sl' and 'result' in r for r in tpsl_results) if sl_price else True
+                
+                if tp_ok and sl_ok:
+                    tpsl_verified = True
+                    logger.info(f"✅ TP/SL orders verified successfully (attempt {attempt + 1})")
+                    break
+                else:
+                    # TP/SL placement failed - retry
+                    failed_orders = []
+                    if tp_price and not tp_ok:
+                        failed_orders.append('TP')
+                    if sl_price and not sl_ok:
+                        failed_orders.append('SL')
+                    
+                    if attempt < max_retries - 1:
+                        logger.warning(f"⚠️ {', '.join(failed_orders)} failed (attempt {attempt + 1}/{max_retries}), retrying...")
+                        import time
+                        time.sleep(0.5 * (attempt + 1))  # Exponential backoff
+                    else:
+                        logger.error(f"⚠️ CRITICAL: {', '.join(failed_orders)} order(s) failed after {max_retries} attempts!")
+                        logger.error(f"   Position is partially unprotected! Position manager will retry on next scan.")
         
         # Track position
         self.position_orders[symbol] = {
@@ -1486,10 +1496,15 @@ class HLOrderManager:
                 self.cancel_all(symbol)
             elif new_sl is not None:
                 # Only modifying SL - keep TP
-                self.cancel_sl_only(symbol, is_long)
+                cancel_result = self.cancel_sl_only(symbol, is_long)
+                logger.debug(f"Cancelled old SL: {cancel_result}")
             elif new_tp is not None:
                 # Only modifying TP - keep SL
                 self._cancel_tp_only(symbol, is_long)
+            
+            # Small delay to ensure cancellation propagates to exchange
+            import asyncio
+            await asyncio.sleep(0.2)
             
             # Set new TP if provided
             if new_tp is not None:

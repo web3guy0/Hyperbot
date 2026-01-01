@@ -423,6 +423,51 @@ class HyperAIBot:
             logger.warning(f"Failed to load active trades state: {e}")
             return False
     
+    async def _verify_recovered_trades(self) -> None:
+        """
+        Verify recovered trades against actual exchange positions.
+        Removes stale entries where position no longer exists.
+        """
+        if not self._active_trade_ids:
+            return
+            
+        try:
+            # Get actual positions from exchange
+            account_state = await self.hl_client.get_account_state()
+            if not account_state:
+                logger.warning("Could not verify trades - no account state")
+                return
+            
+            positions = account_state.get('assetPositions', [])
+            active_symbols = set()
+            
+            for pos in positions:
+                pos_data = pos.get('position', {})
+                if float(pos_data.get('szi', 0)) != 0:
+                    coin = pos_data.get('coin', '')
+                    active_symbols.add(coin)
+            
+            # Check each recovered trade
+            stale_symbols = []
+            for symbol in list(self._active_trade_ids.keys()):
+                if symbol not in active_symbols:
+                    stale_symbols.append(symbol)
+            
+            # Remove stale entries
+            for symbol in stale_symbols:
+                logger.warning(f"⚠️ Recovered trade for {symbol} no longer exists on exchange - removing")
+                del self._active_trade_ids[symbol]
+            
+            if stale_symbols:
+                self._save_active_trades()
+                logger.info(f"🧹 Cleaned up {len(stale_symbols)} stale trade entries")
+            
+            if self._active_trade_ids:
+                logger.info(f"✅ Verified {len(self._active_trade_ids)} active trades still exist on exchange")
+                
+        except Exception as e:
+            logger.error(f"Error verifying recovered trades: {e}")
+    
     def _clear_trade_state(self, symbol: str):
         """Remove a trade from active tracking and update persistence."""
         if symbol in self._active_trade_ids:
@@ -1336,6 +1381,8 @@ class HyperAIBot:
         recovered = self._load_active_trades()
         if recovered:
             logger.info("🔄 Attempting to match recovered trades with exchange positions...")
+            # Verify recovered trades still exist on exchange
+            await self._verify_recovered_trades()
         
         # IMMEDIATE STARTUP: Detect existing positions and protect them
         if self.position_manager:
