@@ -2086,8 +2086,15 @@ class HyperAIBot:
             
             # Backup to JSONL (for now, can remove later)
             log_file = self.trade_log_path / f"trades_{datetime.now().strftime('%Y%m%d')}.jsonl"
+            
+            # Custom JSON encoder for Decimal
+            def decimal_default(obj):
+                if isinstance(obj, Decimal):
+                    return float(obj)
+                raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+            
             with open(log_file, 'a') as f:
-                f.write(json.dumps(trade_record) + '\n')
+                f.write(json.dumps(trade_record, default=decimal_default) + '\n')
                 
         except Exception as e:
             logger.error(f"Error logging trade: {e}")

@@ -331,13 +331,9 @@ class SwingStrategy:
         # Small accounts get DESTROYED by chop. Only trade trends!
         # Ranging = price oscillates, stops out both longs AND shorts
         if regime == MarketRegime.RANGING:
-            # Check confidence - only block if clearly ranging
-            if regime_confidence and regime_confidence > 0.6:
-                logger.info(f"⏸️ RANGING MARKET ({regime_confidence:.0%} confidence) - NO TRADING")
-                logger.info(f"   Small accounts get chopped up in ranges. Waiting for trend...")
-                return None
-            # Low confidence ranging - might be transitioning, allow with caution
-            logger.info(f"⚠️ Possible ranging market - proceeding with extra caution")
+            # HARD BLOCK for ranging markets - too many losses
+            logger.info(f"⏸️ RANGING MARKET - NO TRADING (small accounts get destroyed)")
+            return None
         
         # ========== ADX FILTER: No trend = No trade ==========
         adx = indicators.get('adx')
@@ -345,6 +341,14 @@ class SwingStrategy:
             logger.info(f"⏸️ ADX too low ({adx:.1f} < {self.adx_weak}) - NO TREND, NO TRADE")
             logger.info(f"   Waiting for trend strength to develop...")
             return None
+        
+        # ========== CRITICAL: EMA200 TREND FILTER ==========
+        # This is the MOST IMPORTANT filter - trade WITH the major trend only!
+        # Price below EMA200 = ONLY SHORT, Price above EMA200 = ONLY LONG
+        ema_200 = None
+        if len(candles) >= 200:
+            closes = [Decimal(str(c.get('close', c.get('c', 0)))) for c in candles[-200:]]
+            ema_200 = sum(closes) / len(closes)  # Simple SMA as proxy
         
         # 3. Smart Money Concepts analysis
         smc_analysis = self.smc_analyzer.analyze(candles)
@@ -500,6 +504,28 @@ class SwingStrategy:
             if long_enhanced > 0 or short_enhanced > 0:
                 logger.debug(f"⏳ No signal: LONG={long_enhanced}/{effective_threshold}, SHORT={short_enhanced}/{effective_threshold} (need {effective_threshold}+)")
             return None
+        
+        # ==================== CRITICAL: EMA200 MAJOR TREND HARD BLOCK ====================
+        # This is the MOST IMPORTANT filter! Trade WITH the major trend ONLY.
+        # Analysis shows 0% win rate on LONGs - likely fighting the major downtrend.
+        ema_200 = None
+        if len(candles) >= 200:
+            closes = [Decimal(str(c.get('close', c.get('c', 0)))) for c in candles[-200:]]
+            ema_200 = sum(closes) / len(closes)
+        
+        if ema_200:
+            if direction == 'long' and current_price < float(ema_200):
+                logger.warning(f"🚫 EMA200 HARD BLOCK: Cannot LONG below EMA200 (${current_price:.2f} < ${float(ema_200):.2f})")
+                logger.warning(f"   Major trend is DOWN - only SHORT allowed!")
+                self._pending_signal = None
+                self._confirmation_count = 0
+                return None
+            elif direction == 'short' and current_price > float(ema_200):
+                logger.warning(f"🚫 EMA200 HARD BLOCK: Cannot SHORT above EMA200 (${current_price:.2f} > ${float(ema_200):.2f})")
+                logger.warning(f"   Major trend is UP - only LONG allowed!")
+                self._pending_signal = None
+                self._confirmation_count = 0
+                return None
         
         # ==================== CRITICAL: RSI EXTREME HARD BLOCK ====================
         # This is THE PRIMARY FIX for buying tops and selling bottoms.
