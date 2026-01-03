@@ -101,11 +101,13 @@ class SwingStrategy:
         self.max_signal_score = 25  # Full theoretical range
         
         # Penalty thresholds for critical failures
-        # STRICT PENALTIES for high win rate - reject marginal trades
-        self.regime_penalty = float(os.getenv('REGIME_PENALTY', '5.0'))      # Counter-trend is dangerous
-        self.supertrend_penalty = float(os.getenv('SUPERTREND_PENALTY', '3.0'))  # Against major trend
-        self.volume_penalty = float(os.getenv('VOLUME_PENALTY', '2.0'))      # No volume = fake move
-        self.htf_penalty = float(os.getenv('HTF_PENALTY', '3.0'))         # Against higher timeframe
+        # BALANCED PENALTIES: Heavy enough to filter bad trades, but not so heavy
+        # that legitimate setups get rejected. The hard blocks already handle
+        # the worst cases (counter-trend, RSI extremes, etc.)
+        self.regime_penalty = float(os.getenv('REGIME_PENALTY', '3.0'))      # Counter-trend (was 5 - too harsh)
+        self.supertrend_penalty = float(os.getenv('SUPERTREND_PENALTY', '2.0'))  # Against trend (was 3)
+        self.volume_penalty = float(os.getenv('VOLUME_PENALTY', '1.5'))      # No volume (was 2)
+        self.htf_penalty = float(os.getenv('HTF_PENALTY', '2.0'))         # Against HTF (was 3)
         
         # Technical indicator periods
         self.rsi_period = 14
@@ -274,6 +276,34 @@ class SwingStrategy:
         if not self._check_cooldown():
             return None
         
+        # ==================== OPTIONAL: TIME-OF-DAY FILTER ====================
+        # Low liquidity hours (Asian session) have more fakeouts/wicks
+        # Set TRADING_HOURS_START/END in .env to enable (e.g., 08:00-22:00 UTC)
+        trading_hours_start = os.getenv('TRADING_HOURS_START', '')
+        trading_hours_end = os.getenv('TRADING_HOURS_END', '')
+        if trading_hours_start and trading_hours_end:
+            try:
+                now_utc = datetime.now(timezone.utc)
+                start_h, start_m = map(int, trading_hours_start.split(':'))
+                end_h, end_m = map(int, trading_hours_end.split(':'))
+                current_minutes = now_utc.hour * 60 + now_utc.minute
+                start_minutes = start_h * 60 + start_m
+                end_minutes = end_h * 60 + end_m
+                
+                # Handle overnight ranges (e.g., 22:00-06:00)
+                if start_minutes <= end_minutes:
+                    # Same-day range
+                    in_trading_hours = start_minutes <= current_minutes <= end_minutes
+                else:
+                    # Overnight range
+                    in_trading_hours = current_minutes >= start_minutes or current_minutes <= end_minutes
+                
+                if not in_trading_hours:
+                    logger.debug(f"⏸️ Outside trading hours ({trading_hours_start}-{trading_hours_end} UTC) - skipping")
+                    return None
+            except ValueError:
+                pass  # Invalid format, ignore filter
+        
         # Extract prices
         prices = [Decimal(str(c.get('close', c.get('c', 0)))) for c in candles]
         current_price = prices[-1]
@@ -345,10 +375,8 @@ class SwingStrategy:
         # ========== CRITICAL: EMA200 TREND FILTER ==========
         # This is the MOST IMPORTANT filter - trade WITH the major trend only!
         # Price below EMA200 = ONLY SHORT, Price above EMA200 = ONLY LONG
-        ema_200 = None
-        if len(candles) >= 200:
-            closes = [Decimal(str(c.get('close', c.get('c', 0)))) for c in candles[-200:]]
-            ema_200 = sum(closes) / len(closes)  # Simple SMA as proxy
+        # NOTE: Calculate once here, reuse below for hard block
+        ema_200 = self._calculate_ema(prices, self.ema_trend) if len(prices) >= self.ema_trend else None
         
         # 3. Smart Money Concepts analysis
         smc_analysis = self.smc_analyzer.analyze(candles)
@@ -508,10 +536,7 @@ class SwingStrategy:
         # ==================== CRITICAL: EMA200 MAJOR TREND HARD BLOCK ====================
         # This is the MOST IMPORTANT filter! Trade WITH the major trend ONLY.
         # Analysis shows 0% win rate on LONGs - likely fighting the major downtrend.
-        ema_200 = None
-        if len(candles) >= 200:
-            closes = [Decimal(str(c.get('close', c.get('c', 0)))) for c in candles[-200:]]
-            ema_200 = sum(closes) / len(closes)
+        # NOTE: ema_200 already calculated above, no need to recalculate
         
         if ema_200:
             if direction == 'long' and current_price < float(ema_200):
@@ -597,6 +622,30 @@ class SwingStrategy:
             )
             if st_against and st_result.strength > 1.5:  # Strong trend against us
                 logger.warning(f"🚫 HARD BLOCK: {direction.upper()} against strong Supertrend ({st_result.direction.value}, strength={st_result.strength:.1f})")
+                self._pending_signal = None
+                self._confirmation_count = 0
+                return None
+        
+        # ==================== VOLUME HARD BLOCK ====================
+        # "Volume is truth" - No volume = fake move, trap incoming!
+        # Require at least 60% of average volume to confirm the move is real
+        min_volume_ratio = float(os.getenv('MIN_VOLUME_RATIO', '0.6'))
+        volume_ok, volume_ratio = self._check_volume_confirmation(candles)
+        if volume_ratio < min_volume_ratio:
+            logger.warning(f"🚫 VOLUME HARD BLOCK: Volume too weak ({volume_ratio:.1f}x < {min_volume_ratio}x avg) - likely fake move!")
+            self._pending_signal = None
+            self._confirmation_count = 0
+            return None
+        
+        # ==================== ATR VOLATILITY HARD BLOCK ====================
+        # If ATR is too low, the market is choppy/ranging - hard to profit
+        # Minimum ATR should be at least 0.2% of price to have enough movement
+        min_atr_pct = float(os.getenv('MIN_ATR_PCT', '0.2'))
+        atr_val = indicators.get('atr')
+        if atr_val and current_price > 0:
+            atr_pct = float(atr_val) / current_price * 100
+            if atr_pct < min_atr_pct:
+                logger.warning(f"🚫 ATR HARD BLOCK: Volatility too low (ATR={atr_pct:.2f}% < {min_atr_pct}%) - insufficient movement!")
                 self._pending_signal = None
                 self._confirmation_count = 0
                 return None

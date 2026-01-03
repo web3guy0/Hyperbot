@@ -1198,29 +1198,35 @@ class HyperAIBot:
                     (now - last_trail).total_seconds() >= self._trail_update_interval
                 )
                 
-                # ==================== SWING TRAILING ====================
-                # At +2.5% ROE: Move SL to breakeven to protect profit
-                # This catches profits that would otherwise reverse to losses
-                # 
-                # Your data shows many trades hit +5-9% ROE then reversed to loss
-                # This trailing SL will lock in breakeven at +2.5% ROE
+                # ==================== DYNAMIC TRAILING SL ====================
+                # Problem: Old trailing only locked 0.15% price (1.5% ROE) - basically breakeven!
+                # Solution: Lock 50% of current profit as trade progresses
+                #
+                # Example at 10x leverage:
+                #   At +5% ROE (0.5% price move) → Lock SL at +2.5% ROE (0.25% from entry)
+                #   At +8% ROE (0.8% price move) → Lock SL at +4% ROE (0.4% from entry)
+                #   At +10% ROE (1% price move) → Lock SL at +5% ROE (0.5% from entry)
                 
-                if unrealized_pnl_pct >= 2.5 and can_update_trail:
-                    logger.info(f"🔔 TRAILING TRIGGER: {symbol} at {unrealized_pnl_pct:.1f}% ROE - activating trailing SL!")
+                # Start trailing at +3% ROE (0.3% price move)
+                trail_trigger_roe = 3.0
+                # Lock 50% of profit
+                profit_lock_ratio = 0.5
+                
+                if unrealized_pnl_pct >= trail_trigger_roe and can_update_trail:
+                    # Calculate locked profit level (50% of current ROE)
+                    locked_roe_pct = unrealized_pnl_pct * profit_lock_ratio
+                    locked_price_pct = locked_roe_pct / 10  # Convert ROE to price % at 10x
                     
-                    # Calculate new SL at breakeven + tiny buffer
+                    logger.info(f"🔔 TRAILING TRIGGER: {symbol} at {unrealized_pnl_pct:.1f}% ROE - locking {locked_roe_pct:.1f}% profit!")
+                    
                     if is_long:
-                        # Move SL to entry + 0.15% price = locks small profit
-                        trailing_sl = float(entry_price * Decimal('1.0015'))
-                        if trailing_sl > float(current_price):
-                            trailing_sl = float(entry_price * Decimal('1.0005'))  # Tighter fallback
+                        # Long: SL = entry × (1 + locked_price%)
+                        trailing_sl = float(entry_price * (Decimal('1') + Decimal(str(locked_price_pct/100))))
                     else:
-                        # Short: Move SL to entry - 0.15% price = locks small profit
-                        trailing_sl = float(entry_price * Decimal('0.9985'))
-                        if trailing_sl < float(current_price):
-                            trailing_sl = float(entry_price * Decimal('0.9995'))  # Tighter fallback
+                        # Short: SL = entry × (1 - locked_price%)
+                        trailing_sl = float(entry_price * (Decimal('1') - Decimal(str(locked_price_pct/100))))
                     
-                    # Only update if we haven't already trailed to this level
+                    # Only update if SL actually improved
                     current_sl = order_info.get('sl_price', 0)
                     sl_improved = (is_long and trailing_sl > current_sl) or (not is_long and trailing_sl < current_sl)
                     

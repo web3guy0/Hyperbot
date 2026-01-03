@@ -49,22 +49,25 @@ class AdaptiveRiskManager:
         self.base_leverage = int(os.getenv('MAX_LEVERAGE', '5'))
         
         # FIXED PnL TARGETS (regardless of leverage!)
-        # These are the actual PnL % you want to achieve
-        self.target_tp_pnl = Decimal(os.getenv('TARGET_TP_PNL', '10'))  # 10% profit target
-        self.target_sl_pnl = Decimal(os.getenv('TARGET_SL_PNL', '4'))   # 4% max loss
+        # STRATEGY: Wide SL as safety net + Trailing SL handles actual exits
+        # Database shows 96% of losses were <1% move = noise!
+        # SL=15% gives 1.5% price buffer - survives ALL noise
+        self.target_tp_pnl = Decimal(os.getenv('TARGET_TP_PNL', '10'))  # 10% profit (1% price @ 10x)
+        self.target_sl_pnl = Decimal(os.getenv('TARGET_SL_PNL', '15'))  # 15% safety net (1.5% price @ 10x)
         
         # ATR multipliers (fallback if not using fixed PnL)
-        self.atr_sl_multiplier = Decimal(os.getenv('ATR_SL_MULTIPLIER', '1.5'))
+        self.atr_sl_multiplier = Decimal(os.getenv('ATR_SL_MULTIPLIER', '3.5'))  # Wide safety net
         self.atr_tp_multiplier = Decimal(os.getenv('ATR_TP_MULTIPLIER', '5.0'))
         
         # Use fixed PnL targets? (recommended)
         self.use_fixed_pnl_targets = os.getenv('USE_FIXED_PNL_TARGETS', 'true').lower() == 'true'
         
         # Price move bounds (safety limits)
-        self.min_sl_pct = Decimal('0.3')   # Minimum 0.3% SL price move
-        self.max_sl_pct = Decimal('1.5')   # Maximum 1.5% SL price move  
-        self.min_tp_pct = Decimal('0.5')   # Minimum 0.5% TP price move
-        self.max_tp_pct = Decimal('3.0')   # Maximum 3.0% TP price move
+        # With SL=15% at 10x, we allow 1.5% price move - comfortable buffer
+        self.min_sl_pct = Decimal(os.getenv('MIN_SL_PCT', '1.0'))   # Minimum 1.0% SL price move
+        self.max_sl_pct = Decimal(os.getenv('MAX_SL_PCT', '3.0'))   # Maximum 3.0% SL price move  
+        self.min_tp_pct = Decimal(os.getenv('MIN_TP_PCT', '0.8'))   # Minimum 0.8% TP price move
+        self.max_tp_pct = Decimal(os.getenv('MAX_TP_PCT', '5.0'))   # Maximum 5.0% TP price move
         
         # Risk reduction after losses
         self.consecutive_loss_count = 0
