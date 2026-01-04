@@ -1412,9 +1412,14 @@ class SwingStrategy:
     
     def _check_volume_confirmation(self, candles: List[Dict]) -> Tuple[bool, float]:
         """
-        Check if current volume is above average (confirms move is real).
+        Check if recent volume is above average (confirms move is real).
         
         VOLUME IS TRUTH: No volume = fake move.
+        
+        IMPORTANT: Use the PREVIOUS completed candle, not the current one!
+        The current candle is still forming and will always have low volume mid-candle.
+        
+        Also uses MEDIAN instead of MEAN to avoid being skewed by volume spikes.
         
         Args:
             candles: OHLCV candles
@@ -1422,17 +1427,21 @@ class SwingStrategy:
         Returns:
             Tuple of (is_confirmed, volume_ratio)
         """
-        if len(candles) < 20:
+        if len(candles) < 22:  # Need 21 completed + 1 current
             return True, 1.0  # Not enough data, pass
         
         volumes = [float(c.get('volume', c.get('v', 0))) for c in candles]
-        avg_volume = sum(volumes[-20:]) / 20
-        current_volume = volumes[-1]
         
-        if avg_volume <= 0:
+        # Use PREVIOUS completed candle (current candle [-1] is incomplete!)
+        # Compare against median of prior 20 candles (more robust to spikes)
+        prior_volumes = sorted(volumes[-22:-2])  # Exclude current and 2nd-to-last
+        median_volume = prior_volumes[len(prior_volumes) // 2]
+        recent_volume = volumes[-2]  # Last COMPLETED candle
+        
+        if median_volume <= 0:
             return True, 1.0
         
-        volume_ratio = current_volume / avg_volume
+        volume_ratio = recent_volume / median_volume
         is_confirmed = Decimal(str(volume_ratio)) >= self.volume_multiplier
         
         return is_confirmed, volume_ratio
