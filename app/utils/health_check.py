@@ -54,18 +54,29 @@ class HealthCheck:
         
         logger.info(f"🏥 Health check initialized on port {port}")
     
+    async def _block_scanners(self, request: web.Request) -> web.Response:
+        """Block malicious scanners trying to find config files."""
+        # Don't log every scanner attempt - they're noise
+        return web.Response(status=403, text="Forbidden")
+    
     async def start(self, port: int = None) -> None:
         """Start the health check HTTP server."""
         if port:
             self.port = port
             
         self.app = web.Application()
+        
+        # Only allow specific health check routes
         self.app.router.add_get('/health', self._handle_health)
         self.app.router.add_get('/status', self._handle_status)
         self.app.router.add_get('/ready', self._handle_ready)
         self.app.router.add_get('/metrics', self._handle_metrics)
         
-        self.runner = web.AppRunner(self.app)
+        # Block all other routes (security scanners)
+        self.app.router.add_route('*', '/{path:.*}', self._block_scanners)
+        
+        # Disable access logging for scanner noise
+        self.runner = web.AppRunner(self.app, access_log=None)
         await self.runner.setup()
         
         self.site = web.TCPSite(self.runner, '0.0.0.0', self.port)
