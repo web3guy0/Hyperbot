@@ -202,7 +202,8 @@ class SwingStrategy:
         # Prevents rapid direction changes that destroy accounts
         
         # Signal confirmation - requires signal to persist across multiple scans
-        self.signal_confirmation_required = int(os.getenv('SIGNAL_CONFIRMATION_SCANS', '3'))  # Need 3 consecutive confirmations
+        # REDUCED from 3 to 2 - scores are too volatile, 3 scans almost never confirms
+        self.signal_confirmation_required = int(os.getenv('SIGNAL_CONFIRMATION_SCANS', '2'))  # Need 2 consecutive confirmations
         self._pending_signal: Optional[Dict] = None  # Direction waiting for confirmation
         self._pending_signal_time: Optional[datetime] = None  # CRITICAL FIX: Track when signal started
         self._confirmation_count = 0  # How many times we've seen this direction
@@ -479,23 +480,34 @@ class SwingStrategy:
                 # CRITICAL: Anti-chase logic - PENALIZE chasing momentum
                 # BUT: Don't penalize if we have a TRAP signal! Traps are designed to catch reversals
                 # after sweeps, so they will naturally have candles in the opposite direction.
+                # ALSO: In RANGING markets, anti-chase is less important (we WANT mean reversion)
                 anti_chase = human_analysis.get('anti_chase', {})
                 has_bull_trap = latest_trap and latest_trap.direction == 'short'  # Bull trap = SHORT signal
                 has_bear_trap = latest_trap and latest_trap.direction == 'long'   # Bear trap = LONG signal
                 
+                # Reduce penalty in ranging markets (mean reversion is valid strategy)
+                from app.strategies.adaptive.market_regime import MarketRegime
+                chase_penalty_mult = 0.5 if regime == MarketRegime.RANGING else 1.0
+                
                 if anti_chase.get('chasing_long') and not has_bear_trap:
                     # Penalize long signals when we're chasing green candles (unless bear trap detected)
-                    penalty = self.human_logic_weight * 2  # Heavy penalty
+                    penalty = self.human_logic_weight * 2 * chase_penalty_mult
                     long_enhanced -= penalty
-                    logger.warning(f"⚠️ ANTI-CHASE: {anti_chase['consecutive_green']} green candles - LONG penalty -{penalty:.1f}")
+                    if chase_penalty_mult < 1:
+                        logger.info(f"⚠️ ANTI-CHASE (reduced in ranging): {anti_chase['consecutive_green']} green candles - LONG penalty -{penalty:.1f}")
+                    else:
+                        logger.warning(f"⚠️ ANTI-CHASE: {anti_chase['consecutive_green']} green candles - LONG penalty -{penalty:.1f}")
                 elif anti_chase.get('chasing_long') and has_bear_trap:
                     logger.info(f"✅ ANTI-CHASE overridden by BEAR TRAP signal - LONG allowed")
                 
                 if anti_chase.get('chasing_short') and not has_bull_trap:
                     # Penalize short signals when we're chasing red candles (unless bull trap detected)
-                    penalty = self.human_logic_weight * 2
+                    penalty = self.human_logic_weight * 2 * chase_penalty_mult
                     short_enhanced -= penalty
-                    logger.warning(f"⚠️ ANTI-CHASE: {anti_chase['consecutive_red']} red candles - SHORT penalty -{penalty:.1f}")
+                    if chase_penalty_mult < 1:
+                        logger.info(f"⚠️ ANTI-CHASE (reduced in ranging): {anti_chase['consecutive_red']} red candles - SHORT penalty -{penalty:.1f}")
+                    else:
+                        logger.warning(f"⚠️ ANTI-CHASE: {anti_chase['consecutive_red']} red candles - SHORT penalty -{penalty:.1f}")
                 elif anti_chase.get('chasing_short') and has_bull_trap:
                     logger.info(f"✅ ANTI-CHASE overridden by BULL TRAP signal - SHORT allowed")
         
