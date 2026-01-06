@@ -430,6 +430,11 @@ class HyperAIBot:
         """
         if not self._active_trade_ids:
             return
+        
+        # Need hl_client to verify - skip if not initialized yet
+        if not hasattr(self, 'hl_client') or self.hl_client is None:
+            logger.debug("Cannot verify trades - hl_client not initialized yet")
+            return
             
         try:
             # Get actual positions from exchange
