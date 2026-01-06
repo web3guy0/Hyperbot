@@ -620,8 +620,9 @@ class SwingStrategy:
         
         # ==================== SUPERTREND HARD BLOCK ====================
         # If supertrend is strongly against the trade direction, reject
+        # NOTE: SKIP in RANGING market - Supertrend flip-flops in consolidation
         st_result = self.supertrend.calculate(candles)
-        if st_result:
+        if st_result and regime != MarketRegime.RANGING:
             st_against = (
                 (direction == 'long' and st_result.direction == SupertrendDirection.BEARISH) or
                 (direction == 'short' and st_result.direction == SupertrendDirection.BULLISH)
@@ -631,6 +632,14 @@ class SwingStrategy:
                 self._pending_signal = None
                 self._confirmation_count = 0
                 return None
+        elif st_result and regime == MarketRegime.RANGING:
+            # Just log for debug - don't block in ranging
+            st_against = (
+                (direction == 'long' and st_result.direction == SupertrendDirection.BEARISH) or
+                (direction == 'short' and st_result.direction == SupertrendDirection.BULLISH)
+            )
+            if st_against:
+                logger.info(f"ℹ️ Supertrend against ({st_result.direction.value}) but RANGING - allowing trade")
         
         # ==================== VOLUME HARD BLOCK ====================
         # "Volume is truth" - No volume = fake move, trap incoming!
