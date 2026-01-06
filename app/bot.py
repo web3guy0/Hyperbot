@@ -1208,16 +1208,19 @@ class HyperAIBot:
                 #   At +10% ROE (1% price move) → Lock SL at +5% ROE (0.5% from entry)
                 
                 # Start trailing at +3% ROE (0.3% price move)
-                trail_trigger_roe = 3.0
+                trail_trigger_roe = Decimal('3.0')
                 # Lock 50% of profit
-                profit_lock_ratio = 0.5
+                profit_lock_ratio = Decimal('0.5')
                 
-                if unrealized_pnl_pct >= trail_trigger_roe and can_update_trail:
+                # Ensure unrealized_pnl_pct is Decimal
+                unrealized_pnl_decimal = Decimal(str(unrealized_pnl_pct)) if not isinstance(unrealized_pnl_pct, Decimal) else unrealized_pnl_pct
+                
+                if unrealized_pnl_decimal >= trail_trigger_roe and can_update_trail:
                     # Calculate locked profit level (50% of current ROE)
-                    locked_roe_pct = unrealized_pnl_pct * profit_lock_ratio
+                    locked_roe_pct = float(unrealized_pnl_decimal * profit_lock_ratio)
                     locked_price_pct = locked_roe_pct / 10  # Convert ROE to price % at 10x
                     
-                    logger.info(f"🔔 TRAILING TRIGGER: {symbol} at {unrealized_pnl_pct:.1f}% ROE - locking {locked_roe_pct:.1f}% profit!")
+                    logger.info(f"🔔 TRAILING TRIGGER: {symbol} at {float(unrealized_pnl_decimal):.1f}% ROE - locking {locked_roe_pct:.1f}% profit!")
                     
                     if is_long:
                         # Long: SL = entry × (1 + locked_price%)
