@@ -357,18 +357,23 @@ class SwingStrategy:
             logger.debug(f"⏸️ Regime UNKNOWN for {self.symbol} - skipping signal generation")
             return None
         
-        # ========== CRITICAL FIX: BLOCK TRADING IN RANGING MARKETS ==========
-        # Small accounts get DESTROYED by chop. Only trade trends!
-        # Ranging = price oscillates, stops out both longs AND shorts
-        if regime == MarketRegime.RANGING:
-            # HARD BLOCK for ranging markets - too many losses
-            logger.info(f"⏸️ RANGING MARKET - NO TRADING (small accounts get destroyed)")
+        # ========== RANGING MARKET HANDLING ==========
+        # Small accounts historically get destroyed by chop. 
+        # Option 1: BLOCK completely (safest but misses reversals)
+        # Option 2: Allow with stricter filters (capture mean reversion)
+        # Controlled by ALLOW_RANGING_TRADES env var (default: true to catch reversals)
+        allow_ranging = os.getenv('ALLOW_RANGING_TRADES', 'true').lower() == 'true'
+        if regime == MarketRegime.RANGING and not allow_ranging:
+            logger.info(f"⏸️ RANGING MARKET - NO TRADING (set ALLOW_RANGING_TRADES=true to enable)")
             return None
         
-        # ========== ADX FILTER: No trend = No trade ==========
+        # ========== ADX FILTER: Trend strength requirement ==========
+        # In RANGING mode, we WANT low ADX (mean reversion plays)
+        # In TRENDING mode, we WANT high ADX (trend following)
         adx = indicators.get('adx')
-        if adx is not None and adx < self.adx_weak:  # ADX < 20
-            logger.info(f"⏸️ ADX too low ({adx:.1f} < {self.adx_weak}) - NO TREND, NO TRADE")
+        min_adx = self.adx_weak if regime != MarketRegime.RANGING else 0  # No ADX req in ranging
+        if adx is not None and adx < min_adx:
+            logger.info(f"⏸️ ADX too low ({adx:.1f} < {min_adx}) - NO TREND, NO TRADE")
             logger.info(f"   Waiting for trend strength to develop...")
             return None
         
@@ -643,7 +648,7 @@ class SwingStrategy:
         min_atr_pct = float(os.getenv('MIN_ATR_PCT', '0.2'))
         atr_val = indicators.get('atr')
         if atr_val and current_price > 0:
-            atr_pct = float(atr_val) / current_price * 100
+            atr_pct = float(atr_val) / float(current_price) * 100
             if atr_pct < min_atr_pct:
                 logger.warning(f"🚫 ATR HARD BLOCK: Volatility too low (ATR={atr_pct:.2f}% < {min_atr_pct}%) - insufficient movement!")
                 self._pending_signal = None
@@ -743,15 +748,15 @@ class SwingStrategy:
                 # For longs, smart stop should be lower (further from entry)
                 if smart_stop < original_stop:
                     risk_levels['stop_loss'] = float(smart_stop)
-                    new_sl_pct = abs((current_price - smart_stop) / current_price * 100)
-                    risk_levels['sl_pct'] = float(new_sl_pct)
+                    new_sl_pct = float(abs((current_price - smart_stop) / current_price * 100))
+                    risk_levels['sl_pct'] = new_sl_pct
                     logger.info(f"🛡️ SMART STOP: Moved SL from ${original_stop:.4f} to ${smart_stop:.4f} (beyond liquidity)")
             else:
                 # For shorts, smart stop should be higher (further from entry)
                 if smart_stop > original_stop:
                     risk_levels['stop_loss'] = float(smart_stop)
-                    new_sl_pct = abs((smart_stop - current_price) / current_price * 100)
-                    risk_levels['sl_pct'] = float(new_sl_pct)
+                    new_sl_pct = float(abs((smart_stop - current_price) / current_price * 100))
+                    risk_levels['sl_pct'] = new_sl_pct
                     logger.info(f"🛡️ SMART STOP: Moved SL from ${original_stop:.4f} to ${smart_stop:.4f} (beyond liquidity)")
         
         # Apply session aggression to position size
@@ -771,7 +776,7 @@ class SwingStrategy:
         # Calculate size in tokens (approximate)
         account_value = Decimal(str(account_state.get('account_value', 1000)))
         size_usd = account_value * position_size / 100 * self.leverage
-        size_tokens = size_usd / current_price
+        size_tokens = float(size_usd) / float(current_price)
         
         signal = {
             'symbol': self.symbol,
@@ -1852,7 +1857,7 @@ class SwingStrategy:
         
         # Check if price moved too much during confirmation (invalidates signal)
         first_price = Decimal(str(self._pending_signal['price_at_first']))
-        price_change_pct = abs(current_price - first_price) / first_price * 100
+        price_change_pct = abs(current_price - first_price) / first_price * Decimal('100')
         
         # Adaptive price threshold based on volatility
         max_price_move = Decimal('1.0')
@@ -1981,7 +1986,7 @@ class SwingStrategy:
             return True  # Can't validate without entry price
         
         # Calculate price deviation
-        deviation_pct = abs(current_price - entry_price) / entry_price * 100
+        deviation_pct = abs(current_price - entry_price) / entry_price * Decimal('100')
         
         # Allow up to 0.5% deviation for swing trades
         max_deviation = Decimal('0.5')
