@@ -477,18 +477,27 @@ class SwingStrategy:
                         logger.info(f"📈 HUMAN LOGIC: Mean reversion SHORT (RSI={mean_rev.rsi_value:.0f}) +{self.human_logic_weight * mean_rev.strength * 2.5:.1f}")
                 
                 # CRITICAL: Anti-chase logic - PENALIZE chasing momentum
+                # BUT: Don't penalize if we have a TRAP signal! Traps are designed to catch reversals
+                # after sweeps, so they will naturally have candles in the opposite direction.
                 anti_chase = human_analysis.get('anti_chase', {})
-                if anti_chase.get('chasing_long'):
-                    # Penalize long signals when we're chasing green candles
+                has_bull_trap = latest_trap and latest_trap.direction == 'short'  # Bull trap = SHORT signal
+                has_bear_trap = latest_trap and latest_trap.direction == 'long'   # Bear trap = LONG signal
+                
+                if anti_chase.get('chasing_long') and not has_bear_trap:
+                    # Penalize long signals when we're chasing green candles (unless bear trap detected)
                     penalty = self.human_logic_weight * 2  # Heavy penalty
                     long_enhanced -= penalty
                     logger.warning(f"⚠️ ANTI-CHASE: {anti_chase['consecutive_green']} green candles - LONG penalty -{penalty:.1f}")
+                elif anti_chase.get('chasing_long') and has_bear_trap:
+                    logger.info(f"✅ ANTI-CHASE overridden by BEAR TRAP signal - LONG allowed")
                 
-                if anti_chase.get('chasing_short'):
-                    # Penalize short signals when we're chasing red candles
+                if anti_chase.get('chasing_short') and not has_bull_trap:
+                    # Penalize short signals when we're chasing red candles (unless bull trap detected)
                     penalty = self.human_logic_weight * 2
                     short_enhanced -= penalty
                     logger.warning(f"⚠️ ANTI-CHASE: {anti_chase['consecutive_red']} red candles - SHORT penalty -{penalty:.1f}")
+                elif anti_chase.get('chasing_short') and has_bull_trap:
+                    logger.info(f"✅ ANTI-CHASE overridden by BULL TRAP signal - SHORT allowed")
         
         # Track score history for stability analysis
         self._long_score_history.append(long_enhanced)
