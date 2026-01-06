@@ -455,6 +455,7 @@ class SwingStrategy:
                 
                 # Check for traps (bull/bear traps) - second priority
                 traps = human_analysis.get('traps', [])
+                latest_trap = None  # Initialize to None
                 if traps:
                     latest_trap = traps[-1]
                     trap_direction = latest_trap.recommended_direction
