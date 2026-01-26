@@ -92,6 +92,9 @@ from app.risk.small_account_mode import SmallAccountMode, get_small_account_mode
 # Import paper trading
 from app.execution.paper_trading import PaperTradingEngine, is_paper_trading_enabled, get_paper_trading_balance
 
+# Import trailing stop manager (clean step-based trailing SL)
+from app.execution.trailing_manager import TrailingManager, create_trailing_manager, TrailingConfig
+
 # Import Telegram bot (V2 with modern UX)
 from app.tg_bot.bot import TelegramBot as TelegramBot
 
@@ -260,6 +263,9 @@ class HyperAIBot:
         
         # Position Manager (manages manual orders + early exit)
         self.position_manager: Optional[PositionManager] = None
+        
+        # Trailing Stop Manager (step-based trailing SL with signal revalidation)
+        self.trailing_manager: Optional[TrailingManager] = None
         
         # Risk management
         self.risk_engine: Optional[RiskEngine] = None
@@ -593,6 +599,35 @@ class HyperAIBot:
                 config=position_manager_config
             )
             logger.info("🎯 Phase 6: Position Manager initialized (all features enabled)")
+            
+            # Phase 7: Initialize Trailing Stop Manager (step-based trailing SL)
+            # TP: Fixed at +20% ROE
+            # SL: Starts at -8% ROE, then trails in steps:
+            #   At +4% ROE -> Move SL to breakeven
+            #   At +8% ROE -> Move SL to +4%
+            #   At +12% ROE -> Move SL to +8%
+            #   At +16% ROE -> Move SL to +12%
+            trailing_config = TrailingConfig(
+                tp_roe_pct=float(os.getenv('TARGET_TP_PNL', '20')),
+                initial_sl_roe_pct=float(os.getenv('TARGET_SL_PNL', '-8')),
+                step_triggers={
+                    4.0: 0.0,    # At +4% -> breakeven
+                    8.0: 4.0,    # At +8% -> +4%
+                    12.0: 8.0,   # At +12% -> +8%
+                    16.0: 12.0,  # At +16% -> +12%
+                },
+                revalidate_interval_sec=30.0,  # Check signal every 30 seconds
+                exit_on_invalid_signal=True,
+            )
+            self.trailing_manager = TrailingManager(
+                order_manager=self.order_manager,
+                strategy=self.strategy,
+                config=trailing_config
+            )
+            logger.info("🎯 Phase 7: Trailing Manager initialized")
+            logger.info(f"   TP: +{trailing_config.tp_roe_pct}% ROE (fixed)")
+            logger.info(f"   SL: {trailing_config.initial_sl_roe_pct}% ROE (initial)")
+            logger.info(f"   Trailing steps: +4%→BE, +8%→+4%, +12%→+8%, +16%→+12%")
             
             # Get initial account state
             await self.update_account_state()
@@ -1138,6 +1173,10 @@ class HyperAIBot:
                         # Clean up backup targets
                         if hasattr(self.order_manager, 'position_targets') and symbol in self.order_manager.position_targets:
                             del self.order_manager.position_targets[symbol]
+                        
+                        # Clean up trailing manager tracking
+                        if self.trailing_manager:
+                            self.trailing_manager.unregister_position(symbol)
             
             # Monitor each active position
             for pos in positions:
@@ -1194,73 +1233,44 @@ class HyperAIBot:
                 # Store entry price in order manager for trailing calculation
                 self.order_manager.set_entry_price(symbol, float(entry_price))
                 
-                # ==================== TRAILING STOP THROTTLE ====================
-                # Avoid spam orders - only update trailing stops every 30 seconds per symbol
-                now = datetime.now(timezone.utc)
-                last_trail = self._last_trail_update.get(symbol)
-                can_update_trail = (
-                    last_trail is None or 
-                    (now - last_trail).total_seconds() >= self._trail_update_interval
-                )
-                
-                # ==================== DYNAMIC TRAILING SL ====================
-                # Problem: Old trailing only locked 0.15% price (1.5% ROE) - basically breakeven!
-                # Solution: Lock 50% of current profit as trade progresses
+                # ==================== NEW TRAILING MANAGER ====================
+                # Uses step-based trailing SL with signal revalidation
+                # See app/execution/trailing_manager.py for full logic
                 #
-                # Example at 10x leverage:
-                #   At +5% ROE (0.5% price move) → Lock SL at +2.5% ROE (0.25% from entry)
-                #   At +8% ROE (0.8% price move) → Lock SL at +4% ROE (0.4% from entry)
-                #   At +10% ROE (1% price move) → Lock SL at +5% ROE (0.5% from entry)
+                # Steps: +4%→BE, +8%→+4%, +12%→+8%, +16%→+12%
                 
-                # Start trailing at +3% ROE (0.3% price move)
-                trail_trigger_roe = Decimal('3.0')
-                # Lock 50% of profit
-                profit_lock_ratio = Decimal('0.5')
-                
-                # Ensure unrealized_pnl_pct is Decimal
-                unrealized_pnl_decimal = Decimal(str(unrealized_pnl_pct)) if not isinstance(unrealized_pnl_pct, Decimal) else unrealized_pnl_pct
-                
-                if unrealized_pnl_decimal >= trail_trigger_roe and can_update_trail:
-                    # Calculate locked profit level (50% of current ROE)
-                    locked_roe_pct = float(unrealized_pnl_decimal * profit_lock_ratio)
-                    locked_price_pct = locked_roe_pct / 10  # Convert ROE to price % at 10x
+                if self.trailing_manager:
+                    # Register position if not tracked (handles bot restarts)
+                    if symbol not in self.trailing_manager.positions:
+                        self.trailing_manager.register_position(
+                            symbol=symbol,
+                            entry_price=float(entry_price),
+                            size=abs(size),
+                            is_long=is_long,
+                            leverage=float(leverage)
+                        )
                     
-                    logger.info(f"🔔 TRAILING TRIGGER: {symbol} at {float(unrealized_pnl_decimal):.1f}% ROE - locking {locked_roe_pct:.1f}% profit!")
-                    
-                    if is_long:
-                        # Long: SL = entry × (1 + locked_price%)
-                        trailing_sl = float(entry_price * (Decimal('1') + Decimal(str(locked_price_pct/100))))
-                    else:
-                        # Short: SL = entry × (1 - locked_price%)
-                        trailing_sl = float(entry_price * (Decimal('1') - Decimal(str(locked_price_pct/100))))
-                    
-                    # Only update if SL actually improved
-                    current_sl = order_info.get('sl_price', 0)
-                    sl_improved = (is_long and trailing_sl > current_sl) or (not is_long and trailing_sl < current_sl)
-                    
-                    if sl_improved or current_sl == 0:
-                        logger.info(f"🔒 TRAILING SL: At {unrealized_pnl_pct:.1f}% ROE - Moving SL to ${trailing_sl:.4f} (locks profit)")
+                    # Update trailing stop (step-based, handles cancellation properly)
+                    try:
+                        trail_result = await self.trailing_manager.update(
+                            symbol=symbol,
+                            current_roe=float(unrealized_pnl_pct),
+                            current_price=float(current_price),
+                            candles=self._candles_cache if self._candles_cache else None
+                        )
                         
-                        try:
-                            # ONLY modify SL, keep TP untouched!
-                            result = await self.order_manager.modify_stops(
-                                symbol=symbol,
-                                new_sl=trailing_sl,
-                                new_tp=None  # Explicitly None = don't touch TP
-                            )
-                            if result.get('success'):
-                                self._last_trail_update[symbol] = now
-                                order_info['sl_price'] = trailing_sl
-                                logger.info(f"✅ SL updated on exchange (TP unchanged)")
-                            else:
-                                logger.warning(f"⚠️ Failed to update SL: {result.get('error')}")
-                        except Exception as e:
-                            logger.error(f"❌ Error updating trailing SL: {e}")
+                        # Check if signal became invalid (exit recommendation)
+                        if trail_result.get('recommend_exit'):
+                            logger.warning(f"⚠️ {symbol}: Signal invalidated! Consider exiting position.")
+                            # Could add automatic exit here if desired
+                            
+                    except Exception as e:
+                        logger.error(f"❌ Trailing manager error: {e}")
                 
                 # Check if approaching SL/TP levels (warning system)
-                if unrealized_pnl_pct <= -0.8:  # Within 80% of typical -1% SL
+                if float(unrealized_pnl_pct) <= -6:  # Approaching -8% SL
                     logger.warning(f"⚠️  {symbol} approaching stop loss: P&L {unrealized_pnl_pct:+.1f}%")
-                elif unrealized_pnl_pct >= 1.6:  # Within 80% of typical +2% TP
+                elif float(unrealized_pnl_pct) >= 16:  # Approaching +20% TP
                     logger.info(f"🎯 {symbol} approaching take profit: P&L {unrealized_pnl_pct:+.1f}%")
             
             # Store current positions for next iteration
@@ -1783,6 +1793,19 @@ class HyperAIBot:
                                 if self.position_manager:
                                     position_side = 'long' if signal['side'].lower() == 'buy' else 'short'
                                     self.position_manager.mark_position_as_bot_created(signal['symbol'], position_side)
+                                
+                                # Register position with trailing manager for step-based SL
+                                if self.trailing_manager:
+                                    is_long = signal['side'].lower() in ('buy', 'long')
+                                    leverage = float(os.getenv('MAX_LEVERAGE', '10'))
+                                    self.trailing_manager.register_position(
+                                        symbol=signal['symbol'],
+                                        entry_price=float(signal['entry_price']),
+                                        size=float(signal['size']),
+                                        is_long=is_long,
+                                        leverage=leverage,
+                                        signal_score=signal.get('confidence', 0)
+                                    )
                                 
                                 # Send Telegram notification for successful fill
                                 if self.telegram_bot:
