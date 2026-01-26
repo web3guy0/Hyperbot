@@ -80,34 +80,33 @@ class SwingStrategy:
         # TP/SL is calculated dynamically by AdaptiveRiskManager using ATR
         # See ATR_SL_MULTIPLIER and ATR_TP_MULTIPLIER in .env
         
-        # ==================== SCORING SYSTEM ====================
-        # Full theoretical max: ~25 points (all indicators perfectly aligned)
-        # Score breakdown:
-        #   Base (tech+SMC+HTF+OF+BoS): ~12 points
-        #   Enhanced (regime+supertrend+donchian+vwap+div+vol+stoch+obv+cmf): ~13 points
+        # ==================== SIMPLIFIED SCORING SYSTEM ====================
+        # CLEAN 10-POINT SYSTEM (no penalties - hard blocks handle bad trades)
+        # 
+        # Core Score (0-10):
+        #   - Trend alignment (EMA + regime): 0-3 points
+        #   - Momentum (RSI + pullback): 0-3 points  
+        #   - Volume confirmation (CMF): 0-2 points
+        #   - Structure (SMC + HTF): 0-2 points
         #
-        # Penalty System (critical failures subtract points):
-        #   - Counter-trend trade (regime mismatch): -5 points
-        #   - Against Supertrend: -3 points  
-        #   - Weak volume (below average): -2 points
-        #   - OBV/CMF divergence against direction: -2 points
-        #   - HTF misalignment: -3 points
+        # Hard Blocks (instant rejection - no score needed):
+        #   - EMA200 counter-trend
+        #   - RSI extremes (>65 long, <35 short)
+        #   - 4+ chase candles
+        #   - Supertrend against (strong)
+        #   - Low volume (<60% avg)
         #
-        # ADAPTIVE THRESHOLD based on regime:
-        #   - TRENDING: Higher threshold (safer in strong moves)
-        #   - RANGING: Lower threshold (mean reversion opportunities)
-        self.min_signal_score = int(os.getenv('MIN_SIGNAL_SCORE', '12'))
-        self.ranging_threshold_reduction = int(os.getenv('RANGING_THRESHOLD_REDUCTION', '4'))  # Lower by 4 in ranging
-        self.max_signal_score = 25  # Full theoretical range
+        # Threshold: 6/10 (60%) - same for all regimes
+        self.min_signal_score = int(os.getenv('MIN_SIGNAL_SCORE', '6'))
+        self.ranging_threshold_reduction = int(os.getenv('RANGING_THRESHOLD_REDUCTION', '1'))  # Minimal reduction
+        self.max_signal_score = 10  # Clean 10-point scale
         
-        # Penalty thresholds for critical failures
-        # BALANCED PENALTIES: Heavy enough to filter bad trades, but not so heavy
-        # that legitimate setups get rejected. The hard blocks already handle
-        # the worst cases (counter-trend, RSI extremes, etc.)
-        self.regime_penalty = float(os.getenv('REGIME_PENALTY', '3.0'))      # Counter-trend (was 5 - too harsh)
-        self.supertrend_penalty = float(os.getenv('SUPERTREND_PENALTY', '2.0'))  # Against trend (was 3)
-        self.volume_penalty = float(os.getenv('VOLUME_PENALTY', '1.5'))      # No volume (was 2)
-        self.htf_penalty = float(os.getenv('HTF_PENALTY', '2.0'))         # Against HTF (was 3)
+        # Penalties REMOVED - hard blocks handle these cases
+        # Keeping vars for backward compatibility but setting to 0
+        self.regime_penalty = 0  # Hard block exists
+        self.supertrend_penalty = 0  # Hard block exists  
+        self.volume_penalty = 0  # Hard block exists
+        self.htf_penalty = 0  # Soft filter, not penalty
         
         # Technical indicator periods
         self.rsi_period = 14
@@ -133,7 +132,7 @@ class SwingStrategy:
         self.rsi_extreme_short_block = int(os.getenv('RSI_EXTREME_SHORT_BLOCK', '35'))  # Block SHORT if RSI < this
         self.rsi_pullback_entry_long = int(os.getenv('RSI_PULLBACK_ENTRY_LONG', '45'))  # Good LONG entry if RSI < this
         self.rsi_pullback_entry_short = int(os.getenv('RSI_PULLBACK_ENTRY_SHORT', '55')) # Good SHORT entry if RSI > this
-        self.max_chase_candles = int(os.getenv('MAX_CHASE_CANDLES', '4'))  # Block if 4+ same-direction candles
+        self.max_chase_candles = int(os.getenv('MAX_CHASE_CANDLES', '5'))  # Block if 5+ same-direction candles (relaxed from 4)
         self.warn_chase_candles = int(os.getenv('WARN_CHASE_CANDLES', '3'))  # Penalty if 3+ same-direction candles
         
         # Volume confirmation threshold
@@ -198,12 +197,12 @@ class SwingStrategy:
         self.signal_cooldown_seconds = int(os.getenv('SWING_COOLDOWN', '600'))  # 10 min between signals (was 5)
         self.recent_prices: deque = deque(maxlen=200)
         
-        # ==================== WHIPSAW PROTECTION ====================
-        # Prevents rapid direction changes that destroy accounts
+        # ==================== WHIPSAW PROTECTION (SIMPLIFIED) ====================
+        # Hard blocks + cooldown are enough - no multi-scan confirmation needed
         
-        # Signal confirmation - requires signal to persist across multiple scans
-        # REDUCED from 3 to 2 - scores are too volatile, 3 scans almost never confirms
-        self.signal_confirmation_required = int(os.getenv('SIGNAL_CONFIRMATION_SCANS', '2'))  # Need 2 consecutive confirmations
+        # Signal confirmation - SINGLE SCAN (hard blocks filter bad trades)
+        # Multi-scan confirmation caused late entries and missed moves
+        self.signal_confirmation_required = int(os.getenv('SIGNAL_CONFIRMATION_SCANS', '1'))  # Single scan = immediate
         self._pending_signal: Optional[Dict] = None  # Direction waiting for confirmation
         self._pending_signal_time: Optional[datetime] = None  # CRITICAL FIX: Track when signal started
         self._confirmation_count = 0  # How many times we've seen this direction
@@ -213,7 +212,8 @@ class SwingStrategy:
         self.signal_expiry_seconds = int(os.getenv('SIGNAL_EXPIRY_SECONDS', '300'))  # 5 min default
         
         # Direction lock - prevent flipping too quickly after a signal
-        self.direction_lock_seconds = int(os.getenv('DIRECTION_LOCK_SECONDS', '900'))  # 15 min lock after signal
+        # REDUCED from 15 min to 10 min - allow faster reversals on strong signals
+        self.direction_lock_seconds = int(os.getenv('DIRECTION_LOCK_SECONDS', '600'))  # 10 min lock
         self._direction_lock_until: Optional[datetime] = None
         self._locked_direction: Optional[str] = None
         
@@ -899,13 +899,10 @@ class SwingStrategy:
                 break  # Doji breaks the streak
         
         if direction == 'long':
-            # EMA 200 FILTER (Critical - institutional line in the sand)
-            # Price below EMA 200 = DON'T LONG (fighting major trend)
-            if ema_200 and current_price < ema_200:
-                score -= 3  # Heavy penalty for counter-major-trend
-                logger.debug(f"   ⚠️ EMA200 FILTER: Price ${current_price:.2f} < EMA200 ${ema_200:.2f} - LONG penalty -3")
-            elif ema_200 and current_price > ema_200:
-                score += 0.5  # Small bonus for trend alignment
+            # EMA 200: Hard block already exists in generate_signal()
+            # Only give bonus when aligned (no penalty - hard block handles it)
+            if ema_200 and current_price > ema_200:
+                score += 1  # Bonus for trend alignment
             
             # ==================== ANTI-CHASE FILTER (CRITICAL) ====================
             # DON'T BUY after 3+ consecutive green candles - the move already happened!
@@ -956,13 +953,10 @@ class SwingStrategy:
                 score += 0.25
         
         else:  # short
-            # EMA 200 FILTER (Critical - institutional line in the sand)
-            # Price above EMA 200 = DON'T SHORT (fighting major trend)
-            if ema_200 and current_price > ema_200:
-                score -= 3  # Heavy penalty for counter-major-trend
-                logger.debug(f"   ⚠️ EMA200 FILTER: Price ${current_price:.2f} > EMA200 ${ema_200:.2f} - SHORT penalty -3")
-            elif ema_200 and current_price < ema_200:
-                score += 0.5  # Small bonus for trend alignment
+            # EMA 200: Hard block already exists in generate_signal()
+            # Only give bonus when aligned (no penalty - hard block handles it)
+            if ema_200 and current_price < ema_200:
+                score += 1  # Bonus for trend alignment
             
             # ==================== ANTI-CHASE FILTER (CRITICAL) ====================
             # DON'T SHORT after 3+ consecutive red candles - the move already happened!
@@ -1104,44 +1098,34 @@ class SwingStrategy:
             Tuple of (enhanced_score, details)
         """
         score = base_score
-        details = {'base_score': base_score, 'penalties': []}
+        details = {'base_score': base_score, 'bonuses': []}
         
-        # ========== REGIME ALIGNMENT CHECK (CRITICAL) ==========
-        # Counter-trend trading is DANGEROUS - heavy penalty
+        # ========== REGIME ALIGNMENT (BONUS ONLY - hard block handles counter-trend) ==========
         from app.strategies.adaptive.market_regime import MarketRegime
         regime_result = self.regime_detector.detect_regime(candles)
-        # detect_regime returns (regime_enum, confidence, params) tuple
         regime = regime_result[0] if isinstance(regime_result, tuple) else regime_result
         
-        if direction == 'long' and regime == MarketRegime.TRENDING_DOWN:
-            score -= self.regime_penalty  # -5 points
-            details['penalties'].append({'type': 'regime', 'score': -self.regime_penalty, 'reason': 'LONG in downtrend'})
-            logger.debug(f"   ⛔ REGIME PENALTY: -{self.regime_penalty} (LONG against TRENDING_DOWN)")
-        elif direction == 'short' and regime == MarketRegime.TRENDING_UP:
-            score -= self.regime_penalty  # -5 points
-            details['penalties'].append({'type': 'regime', 'score': -self.regime_penalty, 'reason': 'SHORT in uptrend'})
-            logger.debug(f"   ⛔ REGIME PENALTY: -{self.regime_penalty} (SHORT against TRENDING_UP)")
-        elif (direction == 'long' and regime == MarketRegime.TRENDING_UP) or \
-             (direction == 'short' and regime == MarketRegime.TRENDING_DOWN):
-            score += 2.0  # Bonus for trend alignment
-            details['regime_bonus'] = {'score': 2.0, 'reason': 'Trading WITH trend'}
-            logger.debug(f"   ✅ Regime: +2.0 (Trading WITH {regime.value})")
+        # Hard block in generate_signal() already rejects counter-trend trades
+        # So here we only give BONUSES for trend alignment (no penalties)
+        if (direction == 'long' and regime == MarketRegime.TRENDING_UP) or \
+           (direction == 'short' and regime == MarketRegime.TRENDING_DOWN):
+            score += 1.5  # Bonus for trend alignment
+            details['bonuses'].append({'type': 'regime', 'score': 1.5, 'reason': f'Trading WITH {regime.value}'})
+            logger.debug(f"   ✅ Regime: +1.5 (Trading WITH {regime.value})")
         elif regime == MarketRegime.RANGING:
-            # RANGING MARKET BONUS: Mean-reversion setups are valid here
-            # Give bonus based on RSI extremes (buy oversold, sell overbought)
+            # RANGING MARKET: Mean-reversion bonus based on RSI
             rsi = indicators.get('rsi')
             if rsi:
                 if direction == 'long' and rsi < 40:
-                    score += 1.5  # Oversold in ranging = good long entry
-                    details['ranging_bonus'] = {'score': 1.5, 'reason': 'Oversold in ranging (mean-reversion)'}
-                    logger.debug(f"   ✅ Ranging Bonus: +1.5 (Oversold RSI={rsi:.0f} for LONG)")
+                    score += 1.0  # Oversold in ranging = good long entry
+                    details['bonuses'].append({'type': 'ranging', 'score': 1.0, 'reason': 'Oversold mean-reversion'})
+                    logger.debug(f"   ✅ Ranging: +1.0 (Oversold RSI={rsi:.0f})")
                 elif direction == 'short' and rsi > 60:
-                    score += 1.5  # Overbought in ranging = good short entry
-                    details['ranging_bonus'] = {'score': 1.5, 'reason': 'Overbought in ranging (mean-reversion)'}
-                    logger.debug(f"   ✅ Ranging Bonus: +1.5 (Overbought RSI={rsi:.0f} for SHORT)")
+                    score += 1.0  # Overbought in ranging = good short entry
+                    details['bonuses'].append({'type': 'ranging', 'score': 1.0, 'reason': 'Overbought mean-reversion'})
+                    logger.debug(f"   ✅ Ranging: +1.0 (Overbought RSI={rsi:.0f})")
         
-        # ========== SUPERTREND (CRITICAL) ==========
-        # This is a key trend filter - trading against supertrend is risky
+        # ========== SUPERTREND (BONUS ONLY - hard block handles strong against) ==========
         st_result = self.supertrend.calculate(candles)
         if st_result:
             st_aligned = (
@@ -1151,7 +1135,7 @@ class SwingStrategy:
             
             if st_aligned:
                 # Aligned with supertrend - bonus points
-                st_score = 1.5
+                st_score = 1.0
                 if st_result.changed:  # Fresh flip = extra confidence
                     st_score += 0.5
                 if st_result.strength > 1.0:  # Strong trend
@@ -1164,76 +1148,40 @@ class SwingStrategy:
                     'strength': st_result.strength
                 }
                 logger.debug(f"   ✅ Supertrend: +{st_score:.1f} ({st_result.direction.value}, strength={st_result.strength:.1f}%)")
-            else:
-                # Against supertrend - penalty (but reduced in ranging markets)
-                # In ranging markets, supertrend whipsaws more, so be lenient
-                penalty = self.supertrend_penalty if regime != MarketRegime.RANGING else self.supertrend_penalty * 0.5
-                score -= penalty
-                details['penalties'].append({'type': 'supertrend', 'score': -penalty, 'reason': f'Against {st_result.direction.value}'})
-                details['supertrend'] = {
-                    'aligned': False,
-                    'direction': st_result.direction.value,
-                    'score': -penalty,
-                    'warning': 'Trading against trend!' if regime != MarketRegime.RANGING else 'Against supertrend (ranging - reduced penalty)'
-                }
-                logger.debug(f"   ⛔ SUPERTREND PENALTY: -{penalty:.1f} (AGAINST {st_result.direction.value} trend!)")
+            # Note: Against supertrend is handled by hard block in generate_signal()
+            # No penalty here - just no bonus
         
-        # ========== DONCHIAN CHANNEL (0-1.5 points) ==========
+        # ========== DONCHIAN CHANNEL (0-1 points, bonus only) ==========
         dc_result = self.donchian.calculate(candles)
         if dc_result:
             dc_score = 0.0
             dc_reason = ""
             
-            # Breakout signals are very strong
+            # Breakout signals - bonus only
             if dc_result.breakout == 'bullish' and direction == 'long':
-                dc_score = 1.5
-                dc_reason = "Bullish breakout!"
+                dc_score = 1.0
+                dc_reason = "Bullish breakout"
             elif dc_result.breakout == 'bearish' and direction == 'short':
-                dc_score = 1.5
-                dc_reason = "Bearish breakdown!"
-            # Position-based scoring
-            elif direction == 'long':
-                if dc_result.position == DonchianPosition.UPPER_ZONE:
-                    dc_score = 0.5
-                    dc_reason = "Upper zone (bullish)"
-                elif dc_result.position == DonchianPosition.ABOVE_UPPER:
-                    dc_score = 1.0
-                    dc_reason = "Above upper band"
-                elif dc_result.position == DonchianPosition.LOWER_ZONE:
-                    dc_score = -0.5
-                    dc_reason = "Lower zone (bearish bias)"
-            else:  # short
-                if dc_result.position == DonchianPosition.LOWER_ZONE:
-                    dc_score = 0.5
-                    dc_reason = "Lower zone (bearish)"
-                elif dc_result.position == DonchianPosition.BELOW_LOWER:
-                    dc_score = 1.0
-                    dc_reason = "Below lower band"
-                elif dc_result.position == DonchianPosition.UPPER_ZONE:
-                    dc_score = -0.5
-                    dc_reason = "Upper zone (bullish bias)"
+                dc_score = 1.0
+                dc_reason = "Bearish breakdown"
+            # Position-based scoring (bonus only, no penalties)
+            elif direction == 'long' and dc_result.position in [DonchianPosition.UPPER_ZONE, DonchianPosition.ABOVE_UPPER]:
+                dc_score = 0.5
+                dc_reason = "Bullish zone"
+            elif direction == 'short' and dc_result.position in [DonchianPosition.LOWER_ZONE, DonchianPosition.BELOW_LOWER]:
+                dc_score = 0.5
+                dc_reason = "Bearish zone"
             
-            # Squeeze detection - volatility expansion coming
-            if dc_result.squeeze:
-                dc_score += 0.5
-                dc_reason += " [SQUEEZE]"
-            
-            if dc_score != 0:
+            if dc_score > 0:
                 score += dc_score
-                details['donchian'] = {
-                    'score': dc_score,
-                    'position': dc_result.position.value,
-                    'reason': dc_reason,
-                    'squeeze': dc_result.squeeze,
-                    'width_pct': dc_result.width_pct
-                }
-                logger.debug(f"   Donchian: {dc_score:+.1f} ({dc_reason})")
+                details['donchian'] = {'score': dc_score, 'reason': dc_reason}
+                logger.debug(f"   ✅ Donchian: +{dc_score:.1f} ({dc_reason})")
         
-        # ========== VWAP CONFLUENCE (0-1.5 points) ==========
+        # ========== VWAP CONFLUENCE (0-1 points, bonus only) ==========
         vwap_analysis = self.vwap_calculator.calculate_from_candles(candles)
         vwap_score, vwap_reason = self.vwap_calculator.get_vwap_signal(direction, vwap_analysis)
-        if vwap_score != 0:
-            score += vwap_score
+        if vwap_score > 0:  # Only positive scores
+            score += min(vwap_score, 1.0)  # Cap at 1
             details['vwap'] = {'score': vwap_score, 'reason': vwap_reason}
             logger.debug(f"   VWAP: +{vwap_score:.1f} ({vwap_reason})")
         
@@ -1245,183 +1193,54 @@ class SwingStrategy:
                 list(self.macd_history)
             )
             div_score, div_reason = self.divergence_detector.get_divergence_score(direction)
-            if div_score != 0:
-                score += div_score
+            if div_score > 0:  # Only positive scores
+                score += min(div_score, 1.0)  # Cap at 1
                 details['divergence'] = {'score': div_score, 'reason': div_reason}
-                logger.debug(f"   Divergence: +{div_score:.1f} ({div_reason})")
+                logger.debug(f"   ✅ Divergence: +{div_score:.1f} ({div_reason})")
         
-        # ========== VOLUME CONFIRMATION (CRITICAL) ==========
-        # "Volume is truth" - no volume = fake move
+        # ========== VOLUME CONFIRMATION (BONUS ONLY - hard block handles weak volume) ==========
         volume_ok, volume_ratio = self._check_volume_confirmation(candles)
         if volume_ok:
-            score += 1.5  # Increased bonus for volume confirmation
+            score += 1.0  # Bonus for volume confirmation
             details['volume'] = {'confirmed': True, 'ratio': volume_ratio}
-            logger.debug(f"   ✅ Volume: +1.5 (ratio: {volume_ratio:.1f}x)")
-        else:
-            # Weak volume is a serious warning - PENALTY
-            score -= self.volume_penalty  # -2 points
-            details['penalties'].append({'type': 'volume', 'score': -self.volume_penalty, 'reason': f'Weak volume ({volume_ratio:.1f}x)'})
-            details['volume'] = {'confirmed': False, 'ratio': volume_ratio}
-            logger.debug(f"   ⛔ VOLUME PENALTY: -{self.volume_penalty} (weak: {volume_ratio:.1f}x)")
+            logger.debug(f"   ✅ Volume: +1.0 (ratio: {volume_ratio:.1f}x)")
+        # Note: Weak volume is handled by hard block in generate_signal() - no penalty here
         
-        # ========== STOCH RSI (0-1.5 points) ==========
-        # More sensitive than regular RSI for detecting extreme conditions
-        # NOTE: Disabled by default (redundant with RSI). Enable with USE_STOCH_RSI=true
-        if self.use_stoch_rsi:
-            stoch_result = self.stoch_rsi.calculate(candles)
-            if stoch_result:
-                stoch_score = 0.0
-                stoch_reason = ""
-                
-                # Score based on zone and crossover alignment with direction
-                if direction == 'long':
-                    if stoch_result.zone == 'oversold':
-                        stoch_score = 1.0
-                        stoch_reason = f"Oversold (K={stoch_result.k_line:.1f})"
-                        if stoch_result.crossover == 'bullish':
-                            stoch_score = 1.5
-                            stoch_reason += " + bullish crossover"
-                    elif stoch_result.zone == 'overbought':
-                        stoch_score = -0.5
-                        stoch_reason = f"Overbought warning (K={stoch_result.k_line:.1f})"
-                else:  # short
-                    if stoch_result.zone == 'overbought':
-                        stoch_score = 1.0
-                        stoch_reason = f"Overbought (K={stoch_result.k_line:.1f})"
-                        if stoch_result.crossover == 'bearish':
-                            stoch_score = 1.5
-                            stoch_reason += " + bearish crossover"
-                    elif stoch_result.zone == 'oversold':
-                        stoch_score = -0.5
-                        stoch_reason = f"Oversold warning (K={stoch_result.k_line:.1f})"
-                
-                if stoch_score != 0:
-                    score += stoch_score
-                    details['stoch_rsi'] = {
-                        'score': stoch_score,
-                        'k': stoch_result.k_line,
-                        'd': stoch_result.d_line,
-                        'zone': stoch_result.zone,
-                        'crossover': stoch_result.crossover,
-                        'reason': stoch_reason
-                    }
-                    logger.debug(f"   StochRSI: {stoch_score:+.1f} ({stoch_reason})")
-        
-        # ========== OBV - On Balance Volume (0-1.5 points, -1 for divergence) ==========
-        # Volume-price confirmation from institutional trading
-        # NOTE: Disabled by default (redundant with CMF). Enable with USE_OBV=true
-        if self.use_obv:
-            obv_result = self.obv_calculator.calculate(candles)
-            if obv_result:
-                obv_score = 0.0
-                obv_reason = ""
-                
-                # Divergence is a strong reversal signal
-                if obv_result.divergence == 'bullish' and direction == 'long':
-                    obv_score = 1.5
-                    obv_reason = "Bullish OBV divergence (accumulation)"
-                elif obv_result.divergence == 'bearish' and direction == 'short':
-                    obv_score = 1.5
-                    obv_reason = "Bearish OBV divergence (distribution)"
-                # Divergence against our direction is a warning
-                elif obv_result.divergence == 'bullish' and direction == 'short':
-                    obv_score = -1.0
-                    obv_reason = "⚠️ Bullish divergence vs short"
-                elif obv_result.divergence == 'bearish' and direction == 'long':
-                    obv_score = -1.0
-                    obv_reason = "⚠️ Bearish divergence vs long"
-                # Trend confirmation
-                elif direction == 'long' and obv_result.trend == 'rising':
-                    obv_score = 1.0 if obv_result.strength > 0.5 else 0.5
-                    obv_reason = f"OBV rising (strength={obv_result.strength:.1f})"
-                elif direction == 'short' and obv_result.trend == 'falling':
-                    obv_score = 1.0 if obv_result.strength > 0.5 else 0.5
-                    obv_reason = f"OBV falling (strength={obv_result.strength:.1f})"
-                # Against trend
-                elif direction == 'long' and obv_result.trend == 'falling':
-                    obv_score = -0.5
-                    obv_reason = "OBV falling vs long"
-                elif direction == 'short' and obv_result.trend == 'rising':
-                    obv_score = -0.5
-                    obv_reason = "OBV rising vs short"
-                
-                if obv_score != 0:
-                    score += obv_score
-                    details['obv'] = {
-                        'score': obv_score,
-                        'trend': obv_result.trend,
-                        'strength': obv_result.strength,
-                        'divergence': obv_result.divergence,
-                        'reason': obv_reason
-                    }
-                    if obv_score > 0:
-                        logger.debug(f"   OBV: {obv_score:+.1f} (trend={obv_result.trend}, {obv_reason})")
-                    else:
-                        logger.debug(f"   OBV: {obv_score:+.1f} ⚠️ ({obv_reason})")
-        
-        # ========== CMF - Chaikin Money Flow (0-1.5 points) ==========
-        # Institutional buying/selling pressure
+        # ========== CMF - Chaikin Money Flow (0-1 points, bonus only) ==========
+        # Institutional buying/selling pressure - our ONLY volume/flow indicator
         cmf_result = self.cmf_calculator.calculate(candles)
         if cmf_result:
             cmf_score = 0.0
             cmf_reason = ""
             
-            # Divergence is a strong signal
+            # Divergence bonus (strong signal)
             if cmf_result.divergence == 'bullish' and direction == 'long':
-                cmf_score = 1.5
+                cmf_score = 1.0
                 cmf_reason = "Bullish CMF divergence"
             elif cmf_result.divergence == 'bearish' and direction == 'short':
-                cmf_score = 1.5
+                cmf_score = 1.0
                 cmf_reason = "Bearish CMF divergence"
-            # Zone-based scoring
-            elif direction == 'long':
-                if cmf_result.zone == 'strong_buy':
-                    cmf_score = 1.0
-                    cmf_reason = f"Strong buying ({cmf_result.cmf:.2f})"
-                elif cmf_result.zone == 'buy':
-                    cmf_score = 0.5
-                    cmf_reason = f"Buying pressure ({cmf_result.cmf:.2f})"
-                elif cmf_result.zone in ['sell', 'strong_sell']:
-                    cmf_score = -0.5
-                    cmf_reason = f"Against money flow ({cmf_result.cmf:.2f})"
-            else:  # short
-                if cmf_result.zone == 'strong_sell':
-                    cmf_score = 1.0
-                    cmf_reason = f"Strong selling ({cmf_result.cmf:.2f})"
-                elif cmf_result.zone == 'sell':
-                    cmf_score = 0.5
-                    cmf_reason = f"Selling pressure ({cmf_result.cmf:.2f})"
-                elif cmf_result.zone in ['buy', 'strong_buy']:
-                    cmf_score = -0.5
-                    cmf_reason = f"Against money flow ({cmf_result.cmf:.2f})"
+            # Zone-based bonus only (no penalties)
+            elif direction == 'long' and cmf_result.zone in ['strong_buy', 'buy']:
+                cmf_score = 0.5
+                cmf_reason = f"Buying pressure ({cmf_result.cmf:.2f})"
+            elif direction == 'short' and cmf_result.zone in ['strong_sell', 'sell']:
+                cmf_score = 0.5
+                cmf_reason = f"Selling pressure ({cmf_result.cmf:.2f})"
             
-            if cmf_score != 0:
+            if cmf_score > 0:
                 score += cmf_score
-                details['cmf'] = {
-                    'score': cmf_score,
-                    'cmf': cmf_result.cmf,
-                    'zone': cmf_result.zone,
-                    'trend': cmf_result.trend,
-                    'divergence': cmf_result.divergence,
-                    'reason': cmf_reason
-                }
-                logger.debug(f"   CMF: {cmf_score:+.1f} ({cmf_reason})")
+                details['cmf'] = {'score': cmf_score, 'reason': cmf_reason}
+                logger.debug(f"   ✅ CMF: +{cmf_score:.1f} ({cmf_reason})")
         
-        # ========== FINAL SCORE CALCULATION ==========
-        # Floor at 0 (can't go negative) and cap at max_signal_score
+        # ========== FINAL SCORE - CLEAN 10-POINT SYSTEM ==========
+        # Floor at 0, cap at 10 (no penalties = no negative scores possible)
         final_score = max(0, min(int(score), self.max_signal_score))
         
-        # Calculate total penalties for logging
-        total_penalties = sum(p['score'] for p in details.get('penalties', []))
-        details['total_penalties'] = total_penalties
         details['raw_score'] = int(score)
         details['final_score'] = final_score
         
-        # Only log score summary at debug level (too verbose for info)
-        logger.debug(f"   📊 Score: {base_score} (base) + bonuses - {abs(total_penalties):.0f} (penalties) = {final_score}/{self.max_signal_score}")
-        
-        if final_score > self.max_signal_score:
-            logger.debug(f"   Score capped: {int(score)} → {final_score}")
+        logger.debug(f"   📊 Final Score: {final_score}/{self.max_signal_score}")
         
         return final_score, details
     
